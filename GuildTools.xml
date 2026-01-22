@@ -1,0 +1,16 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+  <Script file="Core.lua"/>
+  <Script file="Utils.lua"/>
+  <Script file="DragonTheme.lua"/>
+  <Script file="Log.lua"/>
+  <Script file="Debug.lua"/>
+  <Script file="Comm.lua"/>
+  <Script file="Logs.lua"/>
+  <Script file="UI.lua"/>
+  <Script file="Raids.lua"/>
+  <Script file="Bank.lua"/>
+  <Script file="Calendar.lua"/>
+  <Script file="Admin.lua"/>
+  <Script file="Minimap.lua"/>
+  <Script file="Locales/enUS.lua"/>
+</Ui>

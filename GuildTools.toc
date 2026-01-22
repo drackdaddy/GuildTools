@@ -1,0 +1,9 @@
+## Interface: 20505
+## Title: GuildTools
+## Notes: Guild leadership toolkit: Calendar, Raids, Bank, Admin, Logs, Sync.
+## Author: Rusty Martin & Copilot
+## Version: 1.0.0
+## SavedVariables: GuildToolsSaved
+## IconTexture: Interface\AddOns\GuildTools\Media\gticon.png
+
+GuildTools.xml
