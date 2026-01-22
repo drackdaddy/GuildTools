@@ -1,4 +1,3 @@
-
 local GT  = GuildTools
 local U   = GT.Utils
 local Log = GT.Log
@@ -10,38 +9,50 @@ local R = GT.Raids
 -- Per request, this is a single generic option.
 local FALLBACK_RAIDS = { "Other" }
 
+-- Safely (and optionally) load the Encounter Journal without assuming any specific API exists.
+local function SafelyLoadEncounterJournal()
+  -- Retail-style API table
+  if _G.C_AddOns then
+    local isLoaded = C_AddOns.IsAddOnLoaded and C_AddOns.IsAddOnLoaded("Blizzard_EncounterJournal")
+    if not isLoaded and C_AddOns.LoadAddOn then
+      pcall(C_AddOns.LoadAddOn, "Blizzard_EncounterJournal")
+      isLoaded = C_AddOns.IsAddOnLoaded and C_AddOns.IsAddOnLoaded("Blizzard_EncounterJournal")
+    end
+    return isLoaded and true or false
+  end
+
+  -- Legacy global LoadAddOn (older clients)
+  if type(_G.LoadAddOn) == "function" then
+    local ok = pcall(LoadAddOn, "Blizzard_EncounterJournal")
+    return ok and true or false
+  end
+
+  -- Nothing to do on this client/era
+  return false
+end
+
 -- Dynamically enumerate raid instances using Encounter Journal (EJ) when possible.
 -- If EJ APIs are unavailable or return nothing, we fall back to {"Other"}.
 local function GetAvailableRaids()
   local result = {}
 
-  -- If EJ APIs aren’t present on this client/era, use fallback.
-  if not _G.EJ_GetInstanceByIndex then
-    for _,name in ipairs(FALLBACK_RAIDS) do
-      table.insert(result, { name = name, id = 0 })
+  -- If EJ API is missing, try to load the EJ, then check again.
+  if type(_G.EJ_GetInstanceByIndex) ~= "function" then
+    SafelyLoadEncounterJournal()
+  end
+
+  if type(_G.EJ_GetInstanceByIndex) == "function" then
+    -- Enumerate raid instances (isRaid = true).
+    local i = 1
+    while true do
+      local name, _, id = EJ_GetInstanceByIndex(i, true)
+      if not name then break end
+      table.insert(result, { name = name, id = id })
+      i = i + 1
     end
-    return result
   end
 
-  -- Ensure the Encounter Journal addon is loaded on clients that require it.
-  if not IsAddOnLoaded("Blizzard_EncounterJournal") then
-    if C_AddOns and C_AddOns.LoadAddOn then
-      pcall(C_AddOns.LoadAddOn, "Blizzard_EncounterJournal")
-    elseif LoadAddOn then
-      pcall(LoadAddOn, "Blizzard_EncounterJournal")
-    end
-  end
-
-  -- Enumerate all raid instances (isRaid = true).
-  local i = 1
-  while true do
-    local name, _, id = EJ_GetInstanceByIndex(i, true)
-    if not name then break end
-    table.insert(result, { name = name, id = id })
-    i = i + 1
-  end
-
-  -- If we didn’t find anything (some clients/eras), revert to fallback.
+  -- Fallback to "Other" if we have nothing (Classic-era or restricted API)
   if #result == 0 then
     for _,name in ipairs(FALLBACK_RAIDS) do
       table.insert(result, { name = name, id = 0 })
@@ -236,7 +247,7 @@ end
 
 local function classColor(class)
   local c = RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
-  if c then return c.r,c.g,c.b end
+  if c then return c.r, c.g, c.b end
   return 1,1,1
 end
 
