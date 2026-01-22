@@ -11,7 +11,7 @@ local INSTANCES = {
   'Molten Core','Blackwing Lair','Ahn\'Qiraj 40','Ruins of Ahn\'Qiraj','Naxxramas'
 }
 
--- WHY: Compute days in a given month (handles leap years)
+-- Days in month helper (leap year safe)
 local function daysInMonth(year, month)
   local nm, ny = month + 1, year
   if nm == 13 then nm, ny = 1, year + 1 end
@@ -19,7 +19,7 @@ local function daysInMonth(year, month)
   return tonumber(date('%d', last))
 end
 
--- WHY: Create a new raid event; no raid size, unlimited signups
+-- Create new event (no size/caps, unlimited signups)
 local function createEvent(title, ts, instance)
   local id = U:NewId('evt')
   local e = {
@@ -27,9 +27,9 @@ local function createEvent(title, ts, instance)
     title    = title or 'Raid',
     ts       = ts or time(),
     instance = instance or 'Karazhan',
-    roles    = {},       -- informational only; no caps
-    signups  = {},       -- name -> { player, class, role }
-    comp     = {},       -- optional group assignments
+    roles    = {},     -- informational only
+    signups  = {},     -- name -> { player, class, role }
+    comp     = {},     -- optional group assignments
   }
   GT.db.events[id] = e
   GT.db.dataVersion = (GT.db.dataVersion or 1) + 1
@@ -57,9 +57,8 @@ function R:BuildUI(parent)
   nameEdit:SetText('Raid Title')
 
   -- ================================
-  -- DATE SELECTORS STACK (Year, Month, Day)
-  -- + Time (horizontal to Year)
-  -- + Instance (horizontal to Month)
+  -- Date selectors: Year (row 1), Month (row 2), Day (row 3)
+  -- Time (to the right of Year), Instance (to the right of Month)
   -- ================================
   local now = time()
   local curYear  = tonumber(date('%Y', now))
@@ -67,10 +66,9 @@ function R:BuildUI(parent)
   local curDay   = tonumber(date('%d', now))
   local sel = { year=curYear, month=curMonth, day=curDay }
 
-  -- Forward declare dayDrop so year/month closures can reference it
-  local dayDrop
+  local dayDrop -- forward declare for closures
 
-  -- Year row (stack #1) + Time (to the right)
+  -- Row 1: Year + Time to the right
   y = y - 36
   local yearLbl = p:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
   yearLbl:SetPoint('TOPLEFT',20,y)
@@ -83,8 +81,8 @@ function R:BuildUI(parent)
   UIDropDownMenu_Initialize(yearDrop, function(self, level)
     for yv = curYear-2, curYear+2 do
       local info = UIDropDownMenu_CreateInfo()
-      info.text  = tostring(yv)
-      info.func  = function()
+      info.text = tostring(yv)
+      info.func = function()
         sel.year = yv
         UIDropDownMenu_SetText(yearDrop, info.text)
         local maxd = daysInMonth(sel.year, sel.month)
@@ -95,9 +93,8 @@ function R:BuildUI(parent)
     end
   end)
 
-  -- Time (horizontal to Year)
   local timeLbl = p:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
-  timeLbl:SetPoint('TOPLEFT', yearLbl, 'TOPLEFT', 260, 0)  -- place to the right of year label
+  timeLbl:SetPoint('TOPLEFT', yearLbl, 'TOPLEFT', 260, 0)
   timeLbl:SetText('Time (24h):')
 
   local timeEdit = CreateFrame('EditBox', nil, p, 'InputBoxTemplate')
@@ -106,7 +103,7 @@ function R:BuildUI(parent)
   timeEdit:SetAutoFocus(false)
   timeEdit:SetText('20:00')
 
-  -- Month row (stack #2) + Instance (to the right)
+  -- Row 2: Month + Instance to the right
   local monthLbl = p:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
   monthLbl:SetPoint('TOPLEFT', yearDrop, 'BOTTOMLEFT', 12, -10)
   monthLbl:SetText('Month:')
@@ -118,8 +115,8 @@ function R:BuildUI(parent)
   UIDropDownMenu_Initialize(monthDrop, function(self, level)
     for m=1,12 do
       local info = UIDropDownMenu_CreateInfo()
-      info.text  = date('%B', time({year=sel.year, month=m, day=1}))
-      info.func  = function()
+      info.text = date('%B', time({year=sel.year, month=m, day=1}))
+      info.func = function()
         sel.month = m
         UIDropDownMenu_SetText(monthDrop, info.text)
         local maxd = daysInMonth(sel.year, sel.month)
@@ -130,9 +127,8 @@ function R:BuildUI(parent)
     end
   end)
 
-  -- Instance (horizontal to Month)
   local instLbl = p:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
-  instLbl:SetPoint('TOPLEFT', monthLbl, 'TOPLEFT', 260, 0)  -- to the right of month label
+  instLbl:SetPoint('TOPLEFT', monthLbl, 'TOPLEFT', 260, 0)
   instLbl:SetText('Instance:')
 
   local instanceDrop = CreateFrame('Frame', 'GTR_InstanceDrop', p, 'UIDropDownMenuTemplate')
@@ -148,7 +144,7 @@ function R:BuildUI(parent)
     end
   end)
 
-  -- Day row (stack #3)
+  -- Row 3: Day
   local dayLbl = p:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
   dayLbl:SetPoint('TOPLEFT', monthDrop, 'BOTTOMLEFT', 12, -10)
   dayLbl:SetText('Day:')
@@ -158,8 +154,8 @@ function R:BuildUI(parent)
       local maxd = daysInMonth(sel.year, sel.month)
       for d=1,maxd do
         local info = UIDropDownMenu_CreateInfo()
-        info.text  = tostring(d)
-        info.func  = function()
+        info.text = tostring(d)
+        info.func = function()
           sel.day = d
           UIDropDownMenu_SetText(dayDrop, tostring(sel.day))
         end
@@ -184,19 +180,21 @@ function R:BuildUI(parent)
       UIErrorsFrame:AddMessage('Insufficient rank to create raids',1,0,0)
       return
     end
-    initDayDrop() -- ensure day list matches current year/month
+    initDayDrop() -- sync day list with current year/month
+
     local hh,mm = timeEdit:GetText():match('^(%d+):(%d+)$')
     hh, mm = tonumber(hh or '20'), tonumber(mm or '00')
     if not hh or not mm or hh > 23 or mm > 59 then
       UIErrorsFrame:AddMessage('Invalid time. Use HH:MM (24h).',1,0,0)
       return
     end
+
     local ts = time({year=sel.year, month=sel.month, day=sel.day, hour=hh, min=mm, sec=0})
     createEvent(nameEdit:GetText(), ts, UIDropDownMenu_GetText(instanceDrop))
     R:Refresh()
   end)
 
-  -- Listing area (moved up since size row removed)
+  -- Listing area
   local list = CreateFrame('Frame', nil, p, 'InsetFrameTemplate3')
   list:SetPoint('TOPLEFT', 20, -300)
   list:SetPoint('BOTTOMRIGHT', -20, 20)
@@ -276,6 +274,7 @@ function Comp:Open(event)
 
     Comp.frame = f
   end
+
   Comp.event = event
   Comp.frame.title:SetText('Raid Composition — '..(event.title or 'Event'))
   Comp:Refresh()
@@ -300,6 +299,7 @@ function Comp:Refresh()
     local row = CreateFrame('Frame', nil, f.signupContent)
     row:SetSize(280, 22)
     row:SetPoint('TOPLEFT', 4, y)
+
     local r,g,b = classColor(s.class)
     local txt = row:CreateFontString(nil,'OVERLAY','GameFontHighlight')
     txt:SetPoint('LEFT', 4, 0)
@@ -312,8 +312,8 @@ function Comp:Refresh()
     UIDropDownMenu_Initialize(dd, function(self, level)
       local function add(label, value)
         local info = UIDropDownMenu_CreateInfo()
-        info.text=label
-        info.func=function()
+        info.text = label
+        info.func = function()
           e.comp[name] = value
           UIDropDownMenu_SetText(dd, value and ('Group '..value) or 'Unassigned')
           Comp:RefreshRight()
@@ -321,11 +321,12 @@ function Comp:Refresh()
         UIDropDownMenu_AddButton(info)
       end
       add('Unassigned', nil)
-      -- Without raid size, default to 5 groups; adjust if you prefer dynamic grouping
       for g=1,5 do add('Group '..g, g) end
     end)
+
     y = y - 24
   end
+
   f.signupContent:SetHeight(-y + 10)
   Comp:RefreshRight()
 end
@@ -333,12 +334,14 @@ end
 function Comp:RefreshRight()
   local right = Comp.frame.right; local e = Comp.event
   for _,child in ipairs({right:GetChildren()}) do child:Hide(); child:SetParent(nil) end
+
   local y = -8
   for g=1,5 do
     local header = right:CreateFontString(nil,'OVERLAY','GameFontNormal')
     header:SetPoint('TOPLEFT', 8, y)
     header:SetText('Group '..g)
     y = y - 18
+
     for name, grp in pairs(e.comp or {}) do
       if grp == g then
         local s = e.signups[name]
@@ -350,6 +353,7 @@ function Comp:RefreshRight()
         y = y - 14
       end
     end
+
     y = y - 6
   end
 end
@@ -367,12 +371,11 @@ function R:Refresh()
 
     local title = box:CreateFontString(nil,'OVERLAY','GameFontNormal')
     title:SetPoint('TOPLEFT', 10, -8)
-    -- Removed “%d‑man” since raid size is no longer used
     title:SetText(string.format('%s  |  %s  |  %s', e.title, e.instance, date('%b %d %H:%M', e.ts)))
 
-    -- Unlimited signup view: show counts only (no caps)
     local counts = {tanks=0, heals=0, dps=0}
-    for _,s in pairs(e.signups) do counts[s.role] = (counts[s.role] or 0)+1 end
+    for _,s in pairs(e.signups) do counts[s.role] = (counts[s.role] or 0) + 1 end
+
     local status = box:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
     status:SetPoint('TOPRIGHT', -10, -10)
     status:SetText(string.format('T:%d  H:%d  D:%d', counts.tanks or 0, counts.heals or 0, counts.dps or 0))
@@ -399,23 +402,25 @@ function R:Refresh()
       local hdr = df:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
       hdr:SetPoint('TOPLEFT', xOfs, 0)
       hdr:SetText(label..':')
+
       local line = df:CreateFontString(nil,'OVERLAY','GameFontDisableSmall')
       line:SetPoint('TOPLEFT', xOfs, -14)
+
       local names = {}
-      for name,s in pairs(e.signups) do if s.role==key then table.insert(names, name) end end
+      for name,s in pairs(e.signups) do if s.role == key then table.insert(names, name) end end
       table.sort(names)
       line:SetText(table.concat(names, ', '))
     end
+
     addRole('Tanks','tanks', 0)
     addRole('Heals','heals', 220)
     addRole('DPS','dps', 440)
 
-    -- Role sign buttons (unlimited)
     local roles = {'tanks','heals','dps'}
     for i,role in ipairs(roles) do
       local b = CreateFrame('Button', nil, box, 'UIPanelButtonTemplate')
       b:SetSize(100,22)
-      b:SetPoint('BOTTOMLEFT', 10+(i-1)*110, 38)
+      b:SetPoint('BOTTOMLEFT', 10 + (i-1)*110, 38)
       b:SetText('Sign '..string.upper(role:sub(1,1)))
       b:SetScript('OnClick', function()
         local name = UnitName('player')
@@ -476,4 +481,3 @@ function R:Refresh()
 
   content:SetHeight(-y + 20)
 end
-
