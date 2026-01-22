@@ -1,13 +1,11 @@
 local GT = GuildTools
 local U = GT.Utils
-
 GT.Calendar = GT.Calendar or {}
 local Cal = GT.Calendar
 
 local current = { year = tonumber(date('%Y')), month = tonumber(date('%m')) }
-
-local function firstDayOfMonth(y, m) local t=time({year=y, month=m, day=1, hour=0}) return tonumber(date('%w', t)) end
-local function daysInMonth(y, m) local t1=time({year=y, month=m+1, day=1}) - 24*3600 return tonumber(date('%d', t1)) end
+local function firstDayOfMonth(y, m) local t=time({year=y, month=m, day=1, hour=0}); return tonumber(date('%w', t)) end
+local function daysInMonth(y, m) local t1=time({year=y, month=m+1, day=1}) - 24*3600; return tonumber(date('%d', t1)) end
 
 function Cal:BuildUI(parent)
   local p = CreateFrame('Frame', nil, parent) p:SetAllPoints(true) parent.container = p
@@ -24,7 +22,15 @@ function Cal:BuildUI(parent)
   Cal:Refresh()
 end
 
-local function eventsOnDay(y,m,d) local out={} for _,e in pairs(GT.db.events) do local ey=tonumber(date('%Y', e.ts)) local em=tonumber(date('%m', e.ts)) local ed=tonumber(date('%d', e.ts)) if ey==y and em==m and ed==d then table.insert(out,e) end end table.sort(out,function(a,b) return a.ts<b.ts end) return out end
+local function eventsOnDay(y,m,d)
+  local out={}
+  for _,e in pairs(GT.gdb.events or {}) do
+    local ey=tonumber(date('%Y', e.ts)); local em=tonumber(date('%m', e.ts)); local ed=tonumber(date('%d', e.ts))
+    if ey==y and em==m and ed==d then table.insert(out,e) end
+  end
+  table.sort(out,function(a,b) return a.ts<b.ts end)
+  return out
+end
 
 function Cal:Refresh()
   if not Cal.parent then return end local p=Cal.parent

@@ -2,14 +2,12 @@ local GT = GuildTools
 GT.Utils = {}
 local U = GT.Utils
 
--- WHY: Single debug entry point; prints to chat when debug is enabled and logs DEBUG.
 function U:debug(msg)
   if GT and GT.db and GT.db.debug then
     DEFAULT_CHAT_FRAME:AddMessage('|cff00ffff[GuildTools]|r '..tostring(msg))
   end
   if GT and GT.Log then GT.Log:Debug('DEBUG', msg) end
 end
-
 function U:TableSize(t) local n=0; for _ in pairs(t or {}) do n=n+1 end; return n end
 function U:NewId(prefix) prefix=prefix or 'id'; return prefix..'-'..time()..'-'..math.random(1000,9999) end
 
@@ -30,7 +28,6 @@ function U:Serialize(tbl)
   table.insert(out, '}')
   return table.concat(out)
 end
-
 function U:Deserialize(str)
   local f, err = loadstring('return '..str)
   if not f then return nil, err end
@@ -39,6 +36,11 @@ function U:Deserialize(str)
   if not ok then return nil, res end
   return res
 end
-
 function U:GetPlayerGuildRankIndex() local _,_,ri=GetGuildInfo('player'); return ri end -- 0=GM
-function U:HasPermission(minRankIndex) local ri=U:GetPlayerGuildRankIndex(); if ri==nil then return false end; return ri <= (minRankIndex or 0) end
+
+-- GUILD-AWARE permission check
+function U:HasPermission(minRankIndex)
+  local ri=U:GetPlayerGuildRankIndex(); if ri==nil then return false end
+  local perms = (GT and GT.gdb and GT.gdb.permissions) or { adminMinRank=0 }
+  return ri <= (minRankIndex or perms.adminMinRank or 0)
+end

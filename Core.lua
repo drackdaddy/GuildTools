@@ -2,15 +2,12 @@ local ADDON_NAME = ...
 _G.GuildTools = _G.GuildTools or {}
 local GT = GuildTools
 
+-- account-level defaults; guild data lives under db.guilds[key]
 local defaults = {
   version = '1.0.0',
-  dataVersion = 1,
-  permissions = { raidsMinRank = 1, bankMinRank = 1, adminMinRank = 0 },
-  events = {},
-  bankRequests = {},
   minimap = { hide=false, angle=200 },
   debug = false,
-  logs = {},
+  guilds = {},
 }
 
 local function copyDefaults(src, dst)
@@ -20,9 +17,53 @@ local function copyDefaults(src, dst)
   end
 end
 
+local function GetRealmKey()
+  if GetNormalizedRealmName then return GetNormalizedRealmName() end
+  return GetRealmName()
+end
+
+local function GetGuildKey()
+  local gname = GetGuildInfo('player')
+  local realm = GetRealmKey() or ''
+  return (gname or 'UNGUILDED') .. '@' .. realm
+end
+
+-- Select or create the current guild bucket and expose GT.gdb
+function GT:SelectGuildDB()
+  self.db.guilds = self.db.guilds or {}
+  local key = GetGuildKey()
+  self.state = self.state or {}
+  self.state.guildKey = key
+
+  -- one-time migration from flat keys if they ever existed
+  if not self.db._migratedGuildScope then
+    local seed = {
+      dataVersion = self.db.dataVersion or 1,
+      events = self.db.events or {},
+      bankRequests = self.db.bankRequests or {},
+      permissions = self.db.permissions or { raidsMinRank=1, bankMinRank=1, adminMinRank=0 },
+      logs = self.db.logs or {},
+    }
+    self.db.guilds[key] = self.db.guilds[key] or seed
+    -- clear flat copies to avoid cross-guild bleed
+    self.db.events, self.db.bankRequests, self.db.permissions, self.db.logs, self.db.dataVersion = nil, nil, nil, nil, nil
+    self.db._migratedGuildScope = true
+  end
+
+  if not self.db.guilds[key] then
+    self.db.guilds[key] = {
+      dataVersion = 1, events = {}, bankRequests = {},
+      permissions = { raidsMinRank=1, bankMinRank=1, adminMinRank=0 }, logs = {},
+    }
+  end
+
+  self.gdb = self.db.guilds[key]
+end
+
 local f = CreateFrame('Frame')
 f:RegisterEvent('ADDON_LOADED')
 f:RegisterEvent('PLAYER_LOGIN')
+f:RegisterEvent('PLAYER_GUILD_UPDATE')
 
 f:SetScript('OnEvent', function(self, event, ...)
   if event == 'ADDON_LOADED' then
@@ -31,19 +72,27 @@ f:SetScript('OnEvent', function(self, event, ...)
       GuildToolsSaved = GuildToolsSaved or {}
       copyDefaults(defaults, GuildToolsSaved)
       GT.db = GuildToolsSaved
+      GT:SelectGuildDB()
       if GT.Admin and GT.Admin.OnInit then GT.Admin.OnInit() end
       if GT.Log and GT.Log.Add then GT.Log:Add('INFO','CORE','Addon loaded') end
-      -- Chat banner & tip (discoverability)
       local ver = GT.db.version or 'n/a'
       DEFAULT_CHAT_FRAME:AddMessage('|cff00ffff[GuildTools]|r Loaded v'..ver..' — type |cffffff00/gt|r to open the app.')
       if GT.Log then GT.Log:Add('INFO','CORE','Loaded v'..ver..' (/gt to open)') end
       if GT.UI and GT.UI.Build then GT.UI.Build() end
     end
   elseif event == 'PLAYER_LOGIN' then
+    GT:SelectGuildDB()
     if GT.Log and GT.Log.Add then GT.Log:Add('INFO','CORE','Player login') end
     if GT.Debug and GT.Debug.Instrument then GT.Debug:Instrument() end
     if GT.Minimap and GT.Minimap.Create then C_Timer.After(0.1, function() GT.Minimap:Create() end) end
     if GT.Comm and GT.Comm.RequestSync then C_Timer.After(3, function() GT.Comm:RequestSync('LOGIN') end) end
+  elseif event == 'PLAYER_GUILD_UPDATE' then
+    local prevKey = GT.state and GT.state.guildKey
+    GT:SelectGuildDB()
+    if GT.state.guildKey ~= prevKey then
+      if GT.Log and GT.Log.Add then GT.Log:Add('INFO','CORE','Guild context changed to '..GT.state.guildKey) end
+      if GT.UI and GT.UI.RefreshAll then GT.UI:RefreshAll() end
+    end
   end
 end)
 
