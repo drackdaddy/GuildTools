@@ -68,32 +68,27 @@ function R:BuildUI(parent)
   parent.container = p
 
   local y = -20
-  local title = p:CreateFontString(nil,'OVERLAY','GameFontNormalLarge')
-  title:SetPoint('TOPLEFT',20,y)
-  title:SetText('Create Raid Event')
+  local header = p:CreateFontString(nil,'OVERLAY','GameFontNormalLarge')
+  header:SetPoint('TOPLEFT',20,y)
+  header:SetText('Create Raid Event')
 
-  -- Create button on its own line directly below title
+  -- Create button on its own line directly below header
   local createBtn = CreateFrame('Button', nil, p, 'UIPanelButtonTemplate')
   createBtn:SetSize(120,24)
   createBtn:SetPoint('TOPLEFT', 20, y - 26)
   createBtn:SetText('Create')
 
-  -- Row: Name + Version + Raid + Date (flyout opener)
+  -- Row: Version + Raid + Date (flyout opener)
   y = y - 60
 
-  local nameEdit = CreateFrame('EditBox', nil, p, 'InputBoxTemplate')
-  nameEdit:SetSize(220,24)
-  nameEdit:SetPoint('TOPLEFT',20,y)
-  nameEdit:SetAutoFocus(false)
-  nameEdit:SetText('Raid Title')
-
+  -- Narrower dropdowns as requested
   local versionDrop = CreateFrame('Frame', 'GTR_VersionDrop', p, 'UIDropDownMenuTemplate')
-  versionDrop:SetPoint('LEFT', nameEdit, 'RIGHT', 20, 0)
-  UIDropDownMenu_SetWidth(versionDrop, 160)
+  versionDrop:SetPoint('TOPLEFT', 20, y)
+  UIDropDownMenu_SetWidth(versionDrop, 120)  -- was wider, now narrower
 
   local instanceDrop = CreateFrame('Frame', 'GTR_InstanceDrop', p, 'UIDropDownMenuTemplate')
-  instanceDrop:SetPoint('LEFT', versionDrop, 'RIGHT', -10, 0)
-  UIDropDownMenu_SetWidth(instanceDrop, 200)
+  instanceDrop:SetPoint('LEFT', versionDrop, 'RIGHT', -10, 0) -- compensate dropdown padding
+  UIDropDownMenu_SetWidth(instanceDrop, 180)  -- was ~200+, now narrower
 
   -- Selected state for Version → Raid
   local selectedVersion = "Classic"
@@ -133,8 +128,9 @@ function R:BuildUI(parent)
   -- Date & Time "dropdown": a button that toggles a flyout calendar+time
   ----------------------------------------------------------------------
   local dateBtn = CreateFrame('Button', nil, p, 'UIPanelButtonTemplate')
-  dateBtn:SetSize(180,24)
+  dateBtn:SetSize(170,24)                                -- a bit narrower too
   dateBtn:SetPoint('LEFT', instanceDrop, 'RIGHT', 10, 0)
+  dateBtn:SetText('')  -- set below
 
   -- Default selection: tomorrow 20:00
   local now = time()
@@ -151,13 +147,16 @@ function R:BuildUI(parent)
   end
   dateBtn:SetText(fmt())
 
-  -- Flyout frame
+  -- Flyout frame (ensure always on top of the posted-raids list)
   local fly = CreateFrame('Frame', nil, p, 'InsetFrameTemplate3')
-  fly:SetSize(520, 308) -- calendar + time row + buttons
+  fly:SetSize(520, 308)  -- calendar + time row + buttons
   fly:SetPoint('TOPLEFT', dateBtn, 'BOTTOMLEFT', 0, -2)
-  fly:SetFrameStrata('DIALOG')
   fly:SetClampedToScreen(true)
+  fly:SetToplevel(true)
+  fly:SetFrameStrata('TOOLTIP')              -- higher than DIALOG; appears on top
+  fly:SetFrameLevel((p:GetFrameLevel() or 0) + 200)
   fly:Hide()
+  fly:SetScript('OnShow', function(self) self:Raise() end)
 
   -- Month controls
   fly.monthText = fly:CreateFontString(nil, 'OVERLAY', 'GameFontHighlightLarge')
@@ -173,7 +172,6 @@ function R:BuildUI(parent)
   nextBtn:SetPoint('LEFT', prevBtn, 'RIGHT', 6, 0)
   nextBtn:SetText('>')
 
-  -- Current month cursor in the flyout view
   local current = { year = sel.year, month = sel.month }
 
   -- Weekday headers
@@ -187,8 +185,8 @@ function R:BuildUI(parent)
   -- Day cells (7x6)
   fly.cells = {}
   local function makeCell(idx)
-    local r = math.floor((idx-1)/7)  -- 0..5
-    local c = (idx-1)%7              -- 0..6
+    local r = math.floor((idx-1)/7)
+    local c = (idx-1)%7
     local btn = CreateFrame('Button', nil, fly, 'UIPanelButtonTemplate')
     btn:SetSize(64, 28)
     btn:SetPoint('TOPLEFT', 10 + c*70, -60 - r*32)
@@ -294,24 +292,21 @@ function R:BuildUI(parent)
   cancelBtn:SetPoint('RIGHT', applyBtn, 'LEFT', -8, 0)
   cancelBtn:SetText('Cancel')
 
-  -- Show/Hide wiring for dateBtn (dropdown behavior)
+  -- Dropdown behavior
   dateBtn:SetScript('OnClick', function()
     if fly:IsShown() then
       fly:Hide()
     else
-      -- refresh with current selection each time we open
       current.year, current.month = sel.year, sel.month
       refreshCalendar()
       hourEdit:SetText(string.format('%02d', sel.hour or 20))
       minEdit:SetText(string.format('%02d', sel.min or 0))
       fly:Show()
+      fly:Raise()  -- make sure it's above everything
     end
   end)
-
   cancelBtn:SetScript('OnClick', function() fly:Hide() end)
-
   applyBtn:SetScript('OnClick', function()
-    -- Clamp time
     local hh = tonumber(hourEdit:GetText()) or sel.hour or 20
     local mm = tonumber(minEdit:GetText()) or sel.min or 0
     if hh < 0 then hh = 0 elseif hh > 23 then hh = 23 end
@@ -327,14 +322,13 @@ function R:BuildUI(parent)
   minEdit:SetText(string.format('%02d', sel.min))
 
   ----------------------------------------------------------------------
-  -- Create button behavior (uses selected Version, Raid, Date & Time)
+  -- Create button behavior (uses selected Raid as title)
   ----------------------------------------------------------------------
   createBtn:SetScript('OnClick', function()
     if not U:HasPermission(GT.db.permissions.raidsMinRank) then
       UIErrorsFrame:AddMessage('Insufficient rank to create raids',1,0,0)
       return
     end
-    -- Ensure date picked
     if not (sel.year and sel.month and sel.day) then
       UIErrorsFrame:AddMessage('Please select a date.',1,0,0)
       return
@@ -348,11 +342,12 @@ function R:BuildUI(parent)
       sec   = 0,
     })
     local instName = selectedRaid or "Other"
-    createEvent(nameEdit:GetText(), ts, instName)
+    local title = instName                          -- no free-text title; use raid name
+    createEvent(title, ts, instName)
     R:Refresh()
   end)
 
-  -- Listing area (pushed lower for the controls)
+  -- Listing area
   local list = CreateFrame('Frame', nil, p, 'InsetFrameTemplate3')
   list:SetPoint('TOPLEFT', 20, -140)
   list:SetPoint('BOTTOMRIGHT', -20, 20)
