@@ -1,31 +1,101 @@
-
--- Comm.lua ultra-safe (uses long bracket strings only)
 local GT = GuildTools
-GT.Comm = GT.Comm or { PREFIX = [[GuildTools]], CHUNK = 220 }
+local U = GT.Utils
+local Log = GT.Log
+GT.Comm = { PREFIX='GuildTools', CHUNK=220 }
 local C = GT.Comm
-
-local SendAddonMessageFunc = (C_ChatInfo and C_ChatInfo.SendAddonMessage) or SendAddonMessage
-local RegisterPrefix = (C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix) or RegisterAddonMessagePrefix
+local SendAddonMessageFunc = C_ChatInfo and C_ChatInfo.SendAddonMessage or SendAddonMessage
+local RegisterPrefix = C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix or RegisterAddonMessagePrefix
 RegisterPrefix(C.PREFIX)
+C.incoming={}
 
--- Minimal RequestSync & receiver to isolate quote issues
-function C:RequestSync(reason)
-  local r = reason or [[MANUAL]]
-  if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage([[GuildTools]]..[[: ]]..[[RequestSync reason=]]..r) end
-  SendAddonMessageFunc(C.PREFIX, [[PING]], [[GUILD]])
-end
+local function sendRaw(msg, channel, target) return SendAddonMessageFunc(C.PREFIX, msg, channel or 'GUILD', target) end
 
-local f = CreateFrame([[Frame]])
-f:RegisterEvent([[CHAT_MSG_ADDON]])
-f:SetScript([[OnEvent]], function(_, prefix, msg, channel, sender)
-  if prefix ~= C.PREFIX then return end
-  if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage([[GuildTools]]..[[: Rx ]]..tostring(msg)..[[ from ]]..tostring(sender)) end
-end)
-
--- Stubs for API compatibility
 function C:Send(type_, payload, channel, target)
-  SendAddonMessageFunc(C.PREFIX, (type_ or [[ ]])..[[
-]]..(payload or [[ ]]), channel or [[GUILD]], target)
+  local body = type_..'\n'..payload
+  local total = math.ceil(#body / C.CHUNK)
+  local id = U:NewId('m')
+  for i=1,total do
+    local part = body:sub((i-1)*C.CHUNK+1, i*C.CHUNK)
+    sendRaw(string.format('^%s^%d^%d^%s', id, i, total, part), channel, target)
+  end
 end
-function C:BroadcastFull() end
-function C:OnMessage() end
+
+local function onAddonMsg(prefix, msg, dist, sender)
+  if prefix ~= C.PREFIX then return end
+  if dist ~= 'GUILD' then return end -- harden: only accept guild traffic
+  if not IsInGuild() then return end
+  local id, idx, total, part = msg:match('^%^(.-)%^(%d+)%^(%d+)%^(.*)')
+  if not id then return end
+  idx, total = tonumber(idx), tonumber(total)
+  local buf = C.incoming[id] or { parts={}, received=0, total=total, from=sender }
+  buf.parts[idx] = part
+  buf.received = buf.received + 1
+  C.incoming[id] = buf
+  if buf.received >= buf.total then
+    local payload = table.concat(buf.parts)
+    C.incoming[id] = nil
+    local type_, data = payload:match('^(.-)\n(.*)$')
+    C:OnMessage(type_, data, sender, dist)
+  end
+end
+
+local f=CreateFrame('Frame')
+f:RegisterEvent('CHAT_MSG_ADDON')
+f:SetScript('OnEvent', function(_,_,...) onAddonMsg(...) end)
+
+function C:RequestSync(reason)
+  if GT.SelectGuildDB then GT:SelectGuildDB() end
+  local pay = U:Serialize({ reason=reason or 'MANUAL', dv=(GT.gdb and GT.gdb.dataVersion) or 1 })
+  if Log then Log:Add('INFO','SYNC','Requesting sync ('..(reason or 'MANUAL')..')') end
+  C:Send('SYNC_REQ', pay)
+end
+
+function C:BroadcastFull()
+  if not U:HasPermission(GT.gdb.permissions.adminMinRank) then return end
+  local snapshot = { dv=GT.gdb.dataVersion, events=GT.gdb.events, bank=GT.gdb.bankRequests, perms=GT.gdb.permissions }
+  if Log then Log:Add('INFO','SYNC','Broadcasting full snapshot') end
+  C:Send('SYNC_FULL', U:Serialize(snapshot))
+end
+
+function C:OnMessage(type_, data, sender, dist)
+  if Log then Log:Add('INFO','SYNC','Received '..tostring(type_)..' from '..tostring(sender or '?')) end
+  if type_=='SYNC_REQ' then
+    if U:HasPermission(GT.gdb.permissions.adminMinRank) then C:BroadcastFull() end
+  elseif type_=='SYNC_FULL' then
+    local tbl = U:Deserialize(data)
+    if tbl and type(tbl)=='table' then
+      if GT.SelectGuildDB then GT:SelectGuildDB() end
+      if not GT.gdb or tbl.dv > (GT.gdb.dataVersion or 0) then
+        GT.gdb.dataVersion = (tbl.dv or GT.gdb.dataVersion or 1)
+        GT.gdb.events = tbl.events or GT.gdb.events
+        GT.gdb.bankRequests = tbl.bank or GT.gdb.bankRequests
+        GT.gdb.permissions = tbl.perms or GT.gdb.permissions
+        if GT.UI and GT.UI.RefreshAll then GT.UI:RefreshAll() end
+        if Log then Log:Add('INFO','SYNC','Applied snapshot dv='..tostring(tbl.dv)) end
+      end
+    end
+  elseif type_=='EVENT_UPDATE' then
+    local t = U:Deserialize(data)
+    if t and t.id then
+      GT.gdb.events[t.id] = t
+      GT.gdb.dataVersion = (GT.gdb.dataVersion or 1) + 1
+      if GT.UI and GT.UI.RefreshRaids then GT.UI:RefreshRaids() end
+      if Log then Log:Add('INFO','EVENT','Event update '..tostring(t.id)) end
+    end
+  elseif type_=='EVENT_DELETE' then
+    local t = U:Deserialize(data)
+    if t and t.id then
+      GT.gdb.events[t.id] = nil
+      if GT.UI and GT.UI.RefreshRaids then GT.UI:RefreshRaids() end
+      if Log then Log:Add('INFO','EVENT','Event delete '..tostring(t.id)) end
+    end
+  elseif type_=='BANK_UPDATE' then
+    local t = U:Deserialize(data)
+    if t and t.id then
+      GT.gdb.bankRequests[t.id] = t
+      GT.gdb.dataVersion = (GT.gdb.dataVersion or 1) + 1
+      if GT.UI and GT.UI.RefreshBank then GT.UI:RefreshBank() end
+      if Log then Log:Add('INFO','BANK','Bank update '..tostring(t.id)) end
+    end
+  end
+end
