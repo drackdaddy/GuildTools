@@ -1,16 +1,57 @@
-local GT = GuildTools
-local U  = GT.Utils
+local GT  = GuildTools
+local U   = GT.Utils
 local Log = GT.Log
 
 GT.Raids = GT.Raids or {}
 local R = GT.Raids
 
-local INSTANCES = {
+-- Fallback list used only if Encounter Journal APIs are unavailable
+local FALLBACK_RAIDS = {
   'Karazhan','Gruul\'s Lair','Magtheridon\'s Lair','Serpentshrine Cavern','Tempest Keep: The Eye','Hyjal Summit','Black Temple','Zul\'Aman','Sunwell Plateau',
   'Molten Core','Blackwing Lair','Ahn\'Qiraj 40','Ruins of Ahn\'Qiraj','Naxxramas'
 }
 
--- CHANGED: no size, no role caps — unlimited signups.
+-- Dynamically enumerate raid instances using Encounter Journal.
+-- This works on modern clients that expose EJ_* APIs. If unavailable,
+-- we return the fallback list above.
+local function GetAvailableRaids()
+  local result = {}
+
+  -- Some clients require the EJ add-on to be loaded before EJ_* calls return data.
+  if not _G.EJ_GetInstanceByIndex then
+    -- Encounter Journal API not present: Classic-era or older client
+    for _,name in ipairs(FALLBACK_RAIDS) do
+      table.insert(result, { name = name, id = 0 })
+    end
+    return result
+  end
+
+  if not IsAddOnLoaded("Blizzard_EncounterJournal") and C_AddOns and C_AddOns.LoadAddOn then
+    C_AddOns.LoadAddOn("Blizzard_EncounterJournal")
+  elseif not IsAddOnLoaded("Blizzard_EncounterJournal") and LoadAddOn then
+    pcall(LoadAddOn, "Blizzard_EncounterJournal")
+  end
+
+  -- Enumerate all raid instances (isRaid=true)
+  local i = 1
+  while true do
+    local name, _, id = EJ_GetInstanceByIndex(i, true)  -- true => raid instances
+    if not name then break end
+    table.insert(result, { name = name, id = id })
+    i = i + 1
+  end
+
+  -- Fallback if nothing was returned (edge cases)
+  if #result == 0 then
+    for _,name in ipairs(FALLBACK_RAIDS) do
+      table.insert(result, { name = name, id = 0 })
+    end
+  end
+
+  return result
+end
+
+-- CHANGED previously: no size, no role caps — unlimited signups
 local function createEvent(title, ts, instance)
   local id = U:NewId('evt')
   local e = {
@@ -18,7 +59,7 @@ local function createEvent(title, ts, instance)
     title    = title or 'Raid',
     ts       = ts or time(),
     instance = instance or 'Karazhan',
-    roles    = {},     -- kept for future metadata; no caps enforced
+    roles    = {},     -- informational only; no caps
     signups  = {},
     comp     = {},
   }
@@ -58,23 +99,29 @@ function R:BuildUI(parent)
   timeEdit:SetAutoFocus(false)
   timeEdit:SetText('20:00')
 
+  -- Instance dropdown (NOW DYNAMIC)
   local instanceDrop = CreateFrame('Frame', 'GTR_InstanceDrop', p, 'UIDropDownMenuTemplate')
   instanceDrop:SetPoint('LEFT', timeEdit, 'RIGHT', 10, 0)
-  UIDropDownMenu_SetWidth(instanceDrop, 180)
-  UIDropDownMenu_SetText(instanceDrop, 'Karazhan')
+  UIDropDownMenu_SetWidth(instanceDrop, 220)
+
+  -- Build the dynamic instance list once per UI build
+  local raidList = GetAvailableRaids()
+  local defaultInstance = (raidList[1] and raidList[1].name) or 'Karazhan'
+  UIDropDownMenu_SetText(instanceDrop, defaultInstance)
+
   UIDropDownMenu_Initialize(instanceDrop, function(self, level)
-    for _,inst in ipairs(INSTANCES) do
+    for _,entry in ipairs(raidList) do
       local info = UIDropDownMenu_CreateInfo()
-      info.text = inst
-      info.func = function() UIDropDownMenu_SetText(instanceDrop, inst) end
+      info.text  = entry.name
+      info.func  = function()
+        UIDropDownMenu_SetText(instanceDrop, entry.name)
+      end
       UIDropDownMenu_AddButton(info)
     end
   end)
 
-  -- REMOVED: sizeDrop (raid size selector)
-  -- REMOVED: Roles (T/H/D) numeric inputs (caps) — unlimited signups.
+  -- (Removed size and role-cap inputs earlier)
 
-  -- Create button (moved to align after instance drop now that caps/size are gone)
   local createBtn = CreateFrame('Button', nil, p, 'UIPanelButtonTemplate')
   createBtn:SetSize(120,24)
   createBtn:SetPoint('LEFT', instanceDrop, 'RIGHT', 10, 0)
@@ -95,11 +142,12 @@ function R:BuildUI(parent)
       min   = tonumber(mm),
       sec   = 0
     })
-    createEvent(nameEdit:GetText(), ts, UIDropDownMenu_GetText(instanceDrop))
+    local instName = UIDropDownMenu_GetText(instanceDrop)
+    createEvent(nameEdit:GetText(), ts, instName)
     R:Refresh()
   end)
 
-  -- List area
+  -- Listing area
   local list = CreateFrame('Frame', nil, p, 'InsetFrameTemplate3')
   list:SetPoint('TOPLEFT', 20, -140)
   list:SetPoint('BOTTOMRIGHT', -20, 20)
@@ -192,7 +240,7 @@ end
 
 local function classColor(class)
   local c = RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
-  if c then return c.r,c.g,c.b end
+  if c then return c.r, c.g, c.b end
   return 1,1,1
 end
 
@@ -219,7 +267,8 @@ function Comp:Refresh()
     dd:SetPoint('LEFT', txt, 'RIGHT', 8, 0)
     UIDropDownMenu_SetWidth(dd,100)
     UIDropDownMenu_SetText(dd, e.comp[name] and ('Group '..e.comp[name]) or 'Unassigned')
-    -- CHANGED: fixed 5 groups now that size is gone
+
+    -- With size removed, default to 5 groups for composition
     UIDropDownMenu_Initialize(dd, function(self, level)
       local function add(label, val)
         local info = UIDropDownMenu_CreateInfo()
@@ -234,6 +283,7 @@ function Comp:Refresh()
       add('Unassigned', nil)
       for g=1,5 do add('Group '..g, g) end
     end)
+
     y = y - 24
   end
 
@@ -249,7 +299,7 @@ function Comp:RefreshRight()
   local y = -8
   for g=1,5 do
     local header = right:CreateFontString(nil,'OVERLAY','GameFontNormal')
-    header:SetPoint('TOPLEFT',8,y)
+    header:SetPoint('TOPLEFT', 8, y)
     header:SetText('Group '..g)
     y = y - 18
 
@@ -259,7 +309,7 @@ function Comp:RefreshRight()
         local r,gg,b = 1,1,1
         if s and s.class then r,gg,b = classColor(s.class) end
         local line = right:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
-        line:SetPoint('TOPLEFT',16,y)
+        line:SetPoint('TOPLEFT', 16, y)
         line:SetText(string.format('|cff%02x%02x%02x%s|r', r*255,gg*255,b*255,name))
         y = y - 14
       end
@@ -282,10 +332,8 @@ function R:Refresh()
 
     local title = box:CreateFontString(nil,'OVERLAY','GameFontNormal')
     title:SetPoint('TOPLEFT',10,-8)
-    -- CHANGED: removed "%d-man" since size is gone
     title:SetText(string.format('%s  |  %s  |  %s', e.title, e.instance, date('%b %d %H:%M', e.ts)))
 
-    -- CHANGED: show counts only (no caps)
     local counts = {tanks=0,heals=0,dps=0}
     for _,s in pairs(e.signups) do counts[s.role] = (counts[s.role] or 0) + 1 end
 
