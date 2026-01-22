@@ -339,7 +339,7 @@ function R:BuildUI(parent)
       info.func  = function()
         selectedVersion = ver
         UIDropDownMenu_SetText(versionDrop, ver)
-        -- repopulate raid drop below
+        PopulateInstanceDrop(selectedVersion)
       end
       UIDropDownMenu_AddButton(info)
     end
@@ -353,6 +353,7 @@ function R:BuildUI(parent)
   instanceDrop:SetPoint('LEFT', versionDrop, 'RIGHT', -10, 0)
   UIDropDownMenu_SetWidth(instanceDrop, 180)
   local selectedRaid = nil
+
   local function PopulateInstanceDrop(versionName)
     local list = RAID_CATALOG[versionName] or {}
     selectedRaid = list[1] or "Other"
@@ -369,16 +370,9 @@ function R:BuildUI(parent)
       end
     end)
   end
-  PopulateInstanceDrop(selectedVersion)
-  -- Refresh raids when version changes
-  hooksecurefunc(UIDropDownMenu, "InitializeHelper", function() end) -- noop to keep scope local
 
-  -- Re-initialize instance drop whenever version text changes
-  local function OnVersionChanged()
-    PopulateInstanceDrop(selectedVersion)
-  end
-  -- Simple way: reset raids after clicking version entries (handled in its func above)
-  -- Nothing extra needed here.
+  -- Initial population based on default selectedVersion
+  PopulateInstanceDrop(selectedVersion)
 
   ----------------------------------------------------------------------
   -- Create button (title uses selected Raid; time saved in 24h)
