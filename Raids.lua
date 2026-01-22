@@ -5,58 +5,47 @@ local Log = GT.Log
 GT.Raids = GT.Raids or {}
 local R = GT.Raids
 
--- Fallback list used only if Encounter Journal APIs are unavailable or return nothing.
--- Per request, this is a single generic option.
+-- Single fallback option when EJ API is unavailable
 local FALLBACK_RAIDS = { "Other" }
 
--- Safely (and optionally) load the Encounter Journal without assuming any specific API exists.
+-- Safely (optionally) load Encounter Journal if the API is present on this client/era.
+-- NO direct calls to IsAddOnLoaded — only guarded calls to C_AddOns / LoadAddOn if they exist.
 local function SafelyLoadEncounterJournal()
-  -- Retail-style API table
-  if _G.C_AddOns then
-    local isLoaded = C_AddOns.IsAddOnLoaded and C_AddOns.IsAddOnLoaded("Blizzard_EncounterJournal")
-    if not isLoaded and C_AddOns.LoadAddOn then
-      pcall(C_AddOns.LoadAddOn, "Blizzard_EncounterJournal")
-      isLoaded = C_AddOns.IsAddOnLoaded and C_AddOns.IsAddOnLoaded("Blizzard_EncounterJournal")
-    end
-    return isLoaded and true or false
+  -- Retail-style API table (Dragonflight+)
+  if type(_G.C_AddOns) == "table" then
+    -- Try to load; ignore return value and errors
+    if type(C_AddOns.LoadAddOn) == "function" then pcall(C_AddOns.LoadAddOn, "Blizzard_EncounterJournal") end
+    return
   end
-
   -- Legacy global LoadAddOn (older clients)
   if type(_G.LoadAddOn) == "function" then
-    local ok = pcall(LoadAddOn, "Blizzard_EncounterJournal")
-    return ok and true or false
+    pcall(LoadAddOn, "Blizzard_EncounterJournal")
   end
-
-  -- Nothing to do on this client/era
-  return false
 end
 
--- Dynamically enumerate raid instances using Encounter Journal (EJ) when possible.
--- If EJ APIs are unavailable or return nothing, we fall back to {"Other"}.
+-- Get raid instances via Encounter Journal when possible; else return {"Other"}.
 local function GetAvailableRaids()
   local result = {}
 
-  -- If EJ API is missing, try to load the EJ, then check again.
+  -- Ensure EJ is loaded (if loading APIs exist)
   if type(_G.EJ_GetInstanceByIndex) ~= "function" then
     SafelyLoadEncounterJournal()
   end
 
+  -- Enumerate raids only if EJ API is present
   if type(_G.EJ_GetInstanceByIndex) == "function" then
-    -- Enumerate raid instances (isRaid = true).
     local i = 1
     while true do
-      local name, _, id = EJ_GetInstanceByIndex(i, true)
+      local name, _, id = EJ_GetInstanceByIndex(i, true) -- true => raid instances
       if not name then break end
-      table.insert(result, { name = name, id = id })
+      result[#result+1] = { name = name, id = id }
       i = i + 1
     end
   end
 
-  -- Fallback to "Other" if we have nothing (Classic-era or restricted API)
+  -- Fallback to "Other" if nothing found or EJ not present
   if #result == 0 then
-    for _,name in ipairs(FALLBACK_RAIDS) do
-      table.insert(result, { name = name, id = 0 })
-    end
+    result[1] = { name = "Other", id = 0 }
   end
 
   return result
@@ -208,7 +197,7 @@ function Comp:Open(event)
     list:SetWidth(320)
 
     local scroll = CreateFrame('ScrollFrame', 'GTR_COMP_SCROLL', list, 'UIPanelScrollFrameTemplate')
-    scroll:SetPoint('TOPLEFT',8,-8)
+    scroll:SetPoint('TOPLEFT', 8, -8)
     scroll:SetPoint('BOTTOMRIGHT', -28, 8)
 
     local content = CreateFrame('Frame', nil, scroll)
@@ -252,197 +241,77 @@ local function classColor(class)
 end
 
 function Comp:Refresh()
-  local f = Comp.frame
-  if not f or not Comp.event then return end
+  local f = Comp.frame; if not f or not Comp.event then return end
   local e = Comp.event
   e.comp = e.comp or {}
 
   for _,child in ipairs({f.signupContent:GetChildren()}) do child:Hide(); child:SetParent(nil) end
-
   local y = -4
   for name,s in pairs(e.signups or {}) do
-    local row = CreateFrame('Frame', nil, f.signupContent)
-    row:SetSize(280,22)
-    row:SetPoint('TOPLEFT',4,y)
-
-    local r,g,b = classColor(s.class)
-    local txt = row:CreateFontString(nil,'OVERLAY','GameFontHighlight')
-    txt:SetPoint('LEFT',4,0)
-    txt:SetText(string.format('|cff%02x%02x%02x%s|r (%s)', r*255,g*255,b*255,name,s.role))
-
-    local dd = CreateFrame('Frame', nil, row, 'UIDropDownMenuTemplate')
-    dd:SetPoint('LEFT', txt, 'RIGHT', 8, 0)
-    UIDropDownMenu_SetWidth(dd,100)
-    UIDropDownMenu_SetText(dd, e.comp[name] and ('Group '..e.comp[name]) or 'Unassigned')
-
-    -- Without a raid size, default to 5 groups for comp.
+    local row = CreateFrame('Frame', nil, f.signupContent) row:SetSize(280,22) row:SetPoint('TOPLEFT',4,y)
+    local r,g,b = classColor(s.class) local txt=row:CreateFontString(nil,'OVERLAY','GameFontHighlight') txt:SetPoint('LEFT',4,0) txt:SetText(string.format('|cff%02x%02x%02x%s|r (%s)', r*255,g*255,b*255,name,s.role))
+    local dd=CreateFrame('Frame', nil, row, 'UIDropDownMenuTemplate') dd:SetPoint('LEFT', txt, 'RIGHT', 8,0) UIDropDownMenu_SetWidth(dd,100) UIDropDownMenu_SetText(dd, e.comp[name] and ('Group '..e.comp[name]) or 'Unassigned')
     UIDropDownMenu_Initialize(dd, function(self, level)
-      local function add(label, val)
-        local info = UIDropDownMenu_CreateInfo()
-        info.text = label
-        info.func = function()
-          e.comp[name] = val
-          UIDropDownMenu_SetText(dd, val and ('Group '..val) or 'Unassigned')
-          Comp:RefreshRight()
-        end
-        UIDropDownMenu_AddButton(info)
-      end
-      add('Unassigned', nil)
-      for g=1,5 do add('Group '..g, g) end
+      local function add(label, val) local info=UIDropDownMenu_CreateInfo() info.text=label info.func=function() e.comp[name]=val UIDropDownMenu_SetText(dd, val and ('Group '..val) or 'Unassigned') Comp:RefreshRight() end UIDropDownMenu_AddButton(info) end
+      add('Unassigned', nil) for g=1,5 do add('Group '..g,g) end
     end)
-
     y = y - 24
   end
-
-  f.signupContent:SetHeight(-y+10)
-  Comp:RefreshRight()
+  f.signupContent:SetHeight(-y+10) Comp:RefreshRight()
 end
 
 function Comp:RefreshRight()
-  local right = Comp.frame.right
-  local e = Comp.event
+  local right=Comp.frame.right local e=Comp.event
   for _,c in ipairs({right:GetChildren()}) do c:Hide(); c:SetParent(nil) end
-
-  local y = -8
-  for g=1,5 do
-    local header = right:CreateFontString(nil,'OVERLAY','GameFontNormal')
-    header:SetPoint('TOPLEFT', 8, y)
-    header:SetText('Group '..g)
-    y = y - 18
-
-    for name,grp in pairs(e.comp or {}) do
-      if grp == g then
-        local s = e.signups[name]
-        local r,gg,b = 1,1,1
-        if s and s.class then r,gg,b = classColor(s.class) end
-        local line = right:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
-        line:SetPoint('TOPLEFT', 16, y)
-        line:SetText(string.format('|cff%02x%02x%02x%s|r', r*255,gg*255,b*255, name))
-        y = y - 14
-      end
-    end
-
-    y = y - 6
+  local y=-8
+  for g=1,5 do local header=right:CreateFontString(nil,'OVERLAY','GameFontNormal') header:SetPoint('TOPLEFT',8,y) header:SetText('Group '..g) y=y-18
+    for name,grp in pairs(e.comp or {}) do if grp==g then local s=e.signups[name] local r,gg,b=1,1,1 if s and s.class then r,gg,b=classColor(s.class) end local line=right:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall') line:SetPoint('TOPLEFT',16,y) line:SetText(string.format('|cff%02x%02x%02x%s|r', r*255,gg*255,b*255,name)) y=y-14 end end
+    y=y-6
   end
 end
 
 function R:Refresh()
   if not R.parent then return end
-  local content = R.parent.content
-  for _,c in ipairs({content:GetChildren()}) do c:Hide(); c:SetParent(nil) end
-
-  local y = -5
+  local content = R.parent.content for _,c in ipairs({content:GetChildren()}) do c:Hide(); c:SetParent(nil) end
+  local y=-5
   for _,e in ipairs(getSortedEvents()) do
-    local box = CreateFrame('Frame', nil, content, 'InsetFrameTemplate3')
-    box:SetSize(800,140)
-    box:SetPoint('TOPLEFT',5,y)
-
-    local title = box:CreateFontString(nil,'OVERLAY','GameFontNormal')
-    title:SetPoint('TOPLEFT',10,-8)
+    local box=CreateFrame('Frame', nil, content, 'InsetFrameTemplate3') box:SetSize(800,140) box:SetPoint('TOPLEFT',5,y)
+    local title=box:CreateFontString(nil,'OVERLAY','GameFontNormal') title:SetPoint('TOPLEFT',10,-8)
     title:SetText(string.format('%s  |  %s  |  %s', e.title, e.instance, date('%b %d %H:%M', e.ts)))
 
-    local counts = {tanks=0,heals=0,dps=0}
-    for _,s in pairs(e.signups) do counts[s.role] = (counts[s.role] or 0) + 1 end
-
-    local status = box:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
-    status:SetPoint('TOPRIGHT',-10,-10)
+    local counts={tanks=0,heals=0,dps=0} for _,s in pairs(e.signups) do counts[s.role]=(counts[s.role] or 0)+1 end
+    local status=box:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall') status:SetPoint('TOPRIGHT',-10,-10)
     status:SetText(string.format('T:%d  H:%d  D:%d', counts.tanks or 0, counts.heals or 0, counts.dps or 0))
 
-    local detailsBtn = CreateFrame('Button', nil, box, 'UIPanelButtonTemplate')
-    detailsBtn:SetSize(70,20)
-    detailsBtn:SetPoint('TOPLEFT',10,-28)
-    detailsBtn:SetText('Details')
-    box.detailsShown=false
-    detailsBtn:SetScript('OnClick', function()
-      box.detailsShown = not box.detailsShown
-      if box.detailsShown then detailsBtn:SetText('Hide') else detailsBtn:SetText('Details') end
-      if box.detailFrame then box.detailFrame:SetShown(box.detailsShown) end
-    end)
+    local detailsBtn=CreateFrame('Button', nil, box, 'UIPanelButtonTemplate') detailsBtn:SetSize(70,20) detailsBtn:SetPoint('TOPLEFT',10,-28) detailsBtn:SetText('Details')
+    box.detailsShown=false detailsBtn:SetScript('OnClick', function() box.detailsShown=not box.detailsShown if box.detailsShown then detailsBtn:SetText('Hide') else detailsBtn:SetText('Details') end if box.detailFrame then box.detailFrame:SetShown(box.detailsShown) end end)
 
-    local df = CreateFrame('Frame', nil, box)
-    df:SetPoint('TOPLEFT',10,-50)
-    df:SetPoint('TOPRIGHT', -10, -50)
-    df:SetHeight(44)
-    df:Hide()
-    box.detailFrame = df
-
-    local function addRole(label,key,x)
-      local hdr = df:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
-      hdr:SetPoint('TOPLEFT',x,0)
-      hdr:SetText(label..':')
-      local line = df:CreateFontString(nil,'OVERLAY','GameFontDisableSmall')
-      line:SetPoint('TOPLEFT',x,-14)
-      local names = {}
-      for name,s in pairs(e.signups) do if s.role==key then table.insert(names, name) end end
-      table.sort(names)
-      line:SetText(table.concat(names, ', '))
+    local df=CreateFrame('Frame', nil, box) df:SetPoint('TOPLEFT',10,-50) df:SetPoint('TOPRIGHT', -10, -50) df:SetHeight(44) df:Hide() box.detailFrame=df
+    local function addRole(label,key,x) local hdr=df:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall') hdr:SetPoint('TOPLEFT',x,0) hdr:SetText(label..':')
+      local line=df:CreateFontString(nil,'OVERLAY','GameFontDisableSmall') line:SetPoint('TOPLEFT',x,-14) local names={} for name,s in pairs(e.signups) do if s.role==key then table.insert(names,name) end end table.sort(names) line:SetText(table.concat(names, ', '))
     end
-    addRole('Tanks','tanks',0)
-    addRole('Heals','heals',220)
-    addRole('DPS','dps',440)
+    addRole('Tanks','tanks',0) addRole('Heals','heals',220) addRole('DPS','dps',440)
 
     local roles={'tanks','heals','dps'}
-    for i,role in ipairs(roles) do
-      local b = CreateFrame('Button', nil, box, 'UIPanelButtonTemplate')
-      b:SetSize(100,22)
-      b:SetPoint('BOTTOMLEFT',10+(i-1)*110,38)
-      b:SetText('Sign '..string.upper(role:sub(1,1)))
-      b:SetScript('OnClick', function()
-        local name = UnitName('player')
-        local _,class = UnitClass('player')
-        e.signups[name] = { player=name, class=class, role=role }
-        GT.db.dataVersion = (GT.db.dataVersion or 1) + 1
-        if GT.Comm then GT.Comm:Send('EVENT_UPDATE', U:Serialize(e)) end
-        if Log then Log:Add('INFO','EVENT','Signup '..name..' as '..role) end
-        R:Refresh()
-      end)
+    for i,role in ipairs(roles) do local b=CreateFrame('Button', nil, box, 'UIPanelButtonTemplate') b:SetSize(100,22) b:SetPoint('BOTTOMLEFT',10+(i-1)*110,38) b:SetText('Sign '..string.upper(role:sub(1,1)))
+      b:SetScript('OnClick', function() local name=UnitName('player') local _,class=UnitClass('player') e.signups[name]={ player=name, class=class, role=role } GT.db.dataVersion=(GT.db.dataVersion or 1)+1 if GT.Comm then GT.Comm:Send('EVENT_UPDATE', U:Serialize(e)) end if Log then Log:Add('INFO','EVENT','Signup '..name..' as '..role) end R:Refresh() end)
     end
 
     if U:HasPermission(GT.db.permissions.raidsMinRank) then
-      local build=CreateFrame('Button', nil, box, 'UIPanelButtonTemplate')
-      build:SetSize(140,22)
-      build:SetPoint('BOTTOMRIGHT', -10, 10)
-      build:SetText('Build Raid Comp')
-      build:SetScript('OnClick', function() R.Comp:Open(e) end)
-
-      local edit=CreateFrame('Button', nil, box, 'UIPanelButtonTemplate')
-      edit:SetSize(80,22)
-      edit:SetPoint('BOTTOMRIGHT', -160, 10)
-      edit:SetText('Edit')
-      edit:SetScript('OnClick', function()
-        StaticPopupDialogs['GTR_EDIT_TITLE']={
-          text='Set new title:', button1='Save', button2='Cancel', hasEditBox=true, timeout=0, whileDead=true, hideOnEscape=true,
-          OnAccept=function(d)
-            e.title = d.editBox:GetText() or e.title
-            if GT.Comm then GT.Comm:Send('EVENT_UPDATE', U:Serialize(e)) end
-            if Log then Log:Add('INFO','EVENT','Renamed event '..e.id..' to '..e.title) end
-            R:Refresh()
-          end
-        }
-        local dlg=StaticPopup_Show('GTR_EDIT_TITLE')
-        if dlg and dlg.editBox then dlg.editBox:SetText(e.title or '') end
+      local build=CreateFrame('Button', nil, box, 'UIPanelButtonTemplate') build:SetSize(140,22) build:SetPoint('BOTTOMRIGHT', -10, 10) build:SetText('Build Raid Comp') build:SetScript('OnClick', function() R.Comp:Open(e) end)
+      local edit=CreateFrame('Button', nil, box, 'UIPanelButtonTemplate') edit:SetSize(80,22) edit:SetPoint('BOTTOMRIGHT', -160, 10) edit:SetText('Edit')
+      edit:SetScript('OnClick', function() StaticPopupDialogs['GTR_EDIT_TITLE']={ text='Set new title:', button1='Save', button2='Cancel', hasEditBox=true, timeout=0, whileDead=true, hideOnEscape=true,
+        OnAccept=function(d) e.title=d.editBox:GetText() or e.title if GT.Comm then GT.Comm:Send('EVENT_UPDATE', U:Serialize(e)) end if Log then Log:Add('INFO','EVENT','Renamed event '..e.id..' to '..e.title) end R:Refresh() end }
+        local dlg=StaticPopup_Show('GTR_EDIT_TITLE') if dlg and dlg.editBox then dlg.editBox:SetText(e.title or '') end
       end)
-
-      local del=CreateFrame('Button', nil, box, 'UIPanelButtonTemplate')
-      del:SetSize(80,22)
-      del:SetPoint('BOTTOMRIGHT', -260, 10)
-      del:SetText('Delete')
-      del:SetScript('OnClick', function()
-        StaticPopupDialogs['GTR_DEL_EVT']={
-          text='Delete this event?', button1='Yes', button2='No', timeout=0, whileDead=true, hideOnEscape=true,
-          OnAccept=function()
-            GT.db.events[e.id] = nil
-            if GT.Comm then GT.Comm:Send('EVENT_DELETE', U:Serialize({id=e.id})) end
-            if Log then Log:Add('INFO','EVENT','Deleted event '..e.id) end
-            R:Refresh()
-          end
-        }
+      local del=CreateFrame('Button', nil, box, 'UIPanelButtonTemplate') del:SetSize(80,22) del:SetPoint('BOTTOMRIGHT', -260, 10) del:SetText('Delete')
+      del:SetScript('OnClick', function() StaticPopupDialogs['GTR_DEL_EVT']={ text='Delete this event?', button1='Yes', button2='No', timeout=0, whileDead=true, hideOnEscape=true,
+        OnAccept=function() GT.db.events[e.id]=nil if GT.Comm then GT.Comm:Send('EVENT_DELETE', U:Serialize({id=e.id})) end if Log then Log:Add('INFO','EVENT','Deleted event '..e.id) end R:Refresh() end }
         StaticPopup_Show('GTR_DEL_EVT')
       end)
     end
 
     y = y - 150
   end
-
   content:SetHeight(-y+20)
 end
