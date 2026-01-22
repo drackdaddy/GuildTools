@@ -1,3 +1,4 @@
+
 local GT  = GuildTools
 local U   = GT.Utils
 local Log = GT.Log
@@ -5,7 +6,7 @@ local Log = GT.Log
 GT.Raids = GT.Raids or {}
 local R = GT.Raids
 
--- Static catalog of raids by version (you can extend this later)
+-- Static catalog of raids by version
 local RAID_CATALOG = {
   Classic = {
     "Molten Core",
@@ -29,15 +30,15 @@ local RAID_CATALOG = {
   },
 }
 
--- Utilities for calendar building
+-- Date helpers for the calendar
 local function firstDayOfMonth(y, m)
   local t = time({year=y, month=m, day=1, hour=0, min=0, sec=0})
-  return tonumber(date('%w', t))  -- 0=Sun .. 6=Sat
+  return tonumber(date('%w', t)) -- 0=Sun .. 6=Sat
 end
 
 local function daysInMonth(y, m)
   local nm, ny = m + 1, y
-  if nm == 13 then nm = 1; ny = y + 1 end
+  if nm == 13 then nm, ny = 1, y + 1 end
   local last = time({year=ny, month=nm, day=1, hour=0, min=0, sec=0}) - 24*3600
   return tonumber(date('%d', last))
 end
@@ -77,31 +78,30 @@ function R:BuildUI(parent)
   createBtn:SetPoint('TOPLEFT', 20, y - 26)
   createBtn:SetText('Create')
 
-  -- === Row: name + (will place version/raid and calendar below) ===
+  -- Row: Name + Version + Raid + Date (flyout opener)
   y = y - 60
+
   local nameEdit = CreateFrame('EditBox', nil, p, 'InputBoxTemplate')
   nameEdit:SetSize(220,24)
   nameEdit:SetPoint('TOPLEFT',20,y)
   nameEdit:SetAutoFocus(false)
   nameEdit:SetText('Raid Title')
 
-  -- === Version + Raid dropdowns (static) ===
   local versionDrop = CreateFrame('Frame', 'GTR_VersionDrop', p, 'UIDropDownMenuTemplate')
   versionDrop:SetPoint('LEFT', nameEdit, 'RIGHT', 20, 0)
   UIDropDownMenu_SetWidth(versionDrop, 160)
 
   local instanceDrop = CreateFrame('Frame', 'GTR_InstanceDrop', p, 'UIDropDownMenuTemplate')
-  instanceDrop:SetPoint('LEFT', versionDrop, 'RIGHT', -10, 0) -- adjust for dropdown padding
-  UIDropDownMenu_SetWidth(instanceDrop, 220)
+  instanceDrop:SetPoint('LEFT', versionDrop, 'RIGHT', -10, 0)
+  UIDropDownMenu_SetWidth(instanceDrop, 200)
 
+  -- Selected state for Version → Raid
   local selectedVersion = "Classic"
   local selectedRaid = nil
-
   local function PopulateInstanceDrop(versionName)
     local list = RAID_CATALOG[versionName] or {}
     selectedRaid = list[1] or "Other"
     UIDropDownMenu_SetText(instanceDrop, selectedRaid)
-
     UIDropDownMenu_Initialize(instanceDrop, function(self, level)
       for _, raidName in ipairs(list) do
         local info = UIDropDownMenu_CreateInfo()
@@ -114,7 +114,6 @@ function R:BuildUI(parent)
       end
     end)
   end
-
   UIDropDownMenu_Initialize(versionDrop, function(self, level)
     for _, ver in ipairs({ "Classic", "Burning Crusade" }) do
       local info = UIDropDownMenu_CreateInfo()
@@ -127,100 +126,110 @@ function R:BuildUI(parent)
       UIDropDownMenu_AddButton(info)
     end
   end)
-
   UIDropDownMenu_SetText(versionDrop, selectedVersion)
   PopulateInstanceDrop(selectedVersion)
 
-  -- === Calendar widget (with time selector underneath) ===
-  -- Defaults: select tomorrow at 20:00
+  ----------------------------------------------------------------------
+  -- Date & Time "dropdown": a button that toggles a flyout calendar+time
+  ----------------------------------------------------------------------
+  local dateBtn = CreateFrame('Button', nil, p, 'UIPanelButtonTemplate')
+  dateBtn:SetSize(180,24)
+  dateBtn:SetPoint('LEFT', instanceDrop, 'RIGHT', 10, 0)
+
+  -- Default selection: tomorrow 20:00
   local now = time()
   local tomorrow = now + 24*3600
-  local curY, curM = tonumber(date('%Y', tomorrow)), tonumber(date('%m', tomorrow))
   local sel = {
     year  = tonumber(date('%Y', tomorrow)),
     month = tonumber(date('%m', tomorrow)),
     day   = tonumber(date('%d', tomorrow)),
+    hour  = 20,
+    min   = 0,
   }
-  local current = { year = curY, month = curM }
+  local function fmt()
+    return string.format('%04d-%02d-%02d  %02d:%02d', sel.year, sel.month, sel.day, sel.hour, sel.min)
+  end
+  dateBtn:SetText(fmt())
 
-  -- Container for the calendar
-  local cal = CreateFrame('Frame', nil, p, 'InsetFrameTemplate3')
-  cal:SetSize(520, 260)
-  cal:SetPoint('TOPLEFT', 20, y - 50)
+  -- Flyout frame
+  local fly = CreateFrame('Frame', nil, p, 'InsetFrameTemplate3')
+  fly:SetSize(520, 308) -- calendar + time row + buttons
+  fly:SetPoint('TOPLEFT', dateBtn, 'BOTTOMLEFT', 0, -2)
+  fly:SetFrameStrata('DIALOG')
+  fly:SetClampedToScreen(true)
+  fly:Hide()
 
-  -- Month header (label + prev/next)
-  cal.monthText = cal:CreateFontString(nil, 'OVERLAY', 'GameFontHighlightLarge')
-  cal.monthText:SetPoint('TOPLEFT', 12, -10)
+  -- Month controls
+  fly.monthText = fly:CreateFontString(nil, 'OVERLAY', 'GameFontHighlightLarge')
+  fly.monthText:SetPoint('TOPLEFT', 12, -10)
 
-  local prevBtn = CreateFrame('Button', nil, cal, 'UIPanelButtonTemplate')
+  local prevBtn = CreateFrame('Button', nil, fly, 'UIPanelButtonTemplate')
   prevBtn:SetSize(24,22)
   prevBtn:SetPoint('TOPRIGHT', -80, -10)
   prevBtn:SetText('<')
 
-  local nextBtn = CreateFrame('Button', nil, cal, 'UIPanelButtonTemplate')
+  local nextBtn = CreateFrame('Button', nil, fly, 'UIPanelButtonTemplate')
   nextBtn:SetSize(24,22)
   nextBtn:SetPoint('LEFT', prevBtn, 'RIGHT', 6, 0)
   nextBtn:SetText('>')
 
+  -- Current month cursor in the flyout view
+  local current = { year = sel.year, month = sel.month }
+
   -- Weekday headers
   local weekdayNames = { 'Sun','Mon','Tue','Wed','Thu','Fri','Sat' }
   for i=1,7 do
-    local lbl = cal:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
+    local lbl = fly:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
     lbl:SetPoint('TOPLEFT', 12 + (i-1)*70, -40)
     lbl:SetText(weekdayNames[i])
   end
 
-  -- Day cells (7 x 6)
-  cal.cells = {}
+  -- Day cells (7x6)
+  fly.cells = {}
   local function makeCell(idx)
     local r = math.floor((idx-1)/7)  -- 0..5
     local c = (idx-1)%7              -- 0..6
-    local btn = CreateFrame('Button', nil, cal, 'UIPanelButtonTemplate')
+    local btn = CreateFrame('Button', nil, fly, 'UIPanelButtonTemplate')
     btn:SetSize(64, 28)
     btn:SetPoint('TOPLEFT', 10 + c*70, -60 - r*32)
     btn.text = btn:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
     btn.text:SetPoint('CENTER')
     btn.day = nil
     btn.index = idx
-    cal.cells[idx] = btn
+    fly.cells[idx] = btn
     return btn
   end
   for i=1,42 do makeCell(i) end
 
-  -- Selection highlight management
-  cal.selectedIndex = nil
+  -- Selection highlight
+  fly.selectedIndex = nil
   local function setSelectedByIndex(idx)
-    -- Clear old selection
-    if cal.selectedIndex and cal.cells[cal.selectedIndex] then
-      local b = cal.cells[cal.selectedIndex]
-      b:SetNormalFontObject('GameFontHighlightSmall')
+    if fly.selectedIndex and fly.cells[fly.selectedIndex] then
+      fly.cells[fly.selectedIndex]:SetNormalFontObject('GameFontHighlightSmall')
     end
-    -- Apply new selection
-    cal.selectedIndex = idx
-    if cal.cells[idx] then
-      local b = cal.cells[idx]
-      b:SetNormalFontObject('GameFontGreenSmall')
+    fly.selectedIndex = idx
+    if fly.cells[idx] then
+      fly.cells[idx]:SetNormalFontObject('GameFontGreenSmall')
     end
   end
 
   local function refreshCalendar()
-    cal.monthText:SetText(date('%B %Y', time({year=current.year, month=current.month, day=1})))
+    fly.monthText:SetText(date('%B %Y', time({year=current.year, month=current.month, day=1})))
     local fd  = firstDayOfMonth(current.year, current.month)
     local dim = daysInMonth(current.year, current.month)
     local n = 1
     for i=1,42 do
-      local btn = cal.cells[i]
-      btn.day = nil
-      btn.text:SetText('')
-      btn:Disable()
-      btn:SetNormalFontObject('GameFontHighlightSmall')
+      local b = fly.cells[i]
+      b.day = nil
+      b.text:SetText('')
+      b:Disable()
+      b:SetNormalFontObject('GameFontHighlightSmall')
     end
     for i=(fd+1),(fd+dim) do
-      local btn = cal.cells[i]
-      btn.day = n
-      btn.text:SetText(tostring(n))
-      btn:Enable()
-      -- Default selection highlight if current grid contains sel
+      local b = fly.cells[i]
+      b.day = n
+      b.text:SetText(tostring(n))
+      b:Enable()
       if current.year == sel.year and current.month == sel.month and n == sel.day then
         setSelectedByIndex(i)
       end
@@ -229,8 +238,8 @@ function R:BuildUI(parent)
   end
 
   for i=1,42 do
-    local btn = cal.cells[i]
-    btn:SetScript('OnClick', function(self)
+    local b = fly.cells[i]
+    b:SetScript('OnClick', function(self)
       if not self.day then return end
       sel.year, sel.month, sel.day = current.year, current.month, self.day
       setSelectedByIndex(self.index)
@@ -248,15 +257,13 @@ function R:BuildUI(parent)
     refreshCalendar()
   end)
 
-  refreshCalendar()
-
-  -- === Time selector under the calendar ===
-  local timeRow = CreateFrame('Frame', nil, p)
-  timeRow:SetPoint('TOPLEFT', cal, 'BOTTOMLEFT', 0, -8)
-  timeRow:SetSize(300, 26)
+  -- Time selector under calendar
+  local timeRow = CreateFrame('Frame', nil, fly)
+  timeRow:SetPoint('TOPLEFT', 0, -260)
+  timeRow:SetSize(520, 24)
 
   local timeLbl = timeRow:CreateFontString(nil,'OVERLAY','GameFontHighlight')
-  timeLbl:SetPoint('LEFT', 10, 0)
+  timeLbl:SetPoint('LEFT', 12, 0)
   timeLbl:SetText('Time (24h):')
 
   local hourEdit = CreateFrame('EditBox', nil, timeRow, 'InputBoxTemplate')
@@ -265,7 +272,6 @@ function R:BuildUI(parent)
   hourEdit:SetAutoFocus(false)
   hourEdit:SetNumeric(true)
   hourEdit:SetMaxLetters(2)
-  hourEdit:SetText('20')
 
   local colon = timeRow:CreateFontString(nil,'OVERLAY','GameFontHighlight')
   colon:SetPoint('LEFT', hourEdit, 'RIGHT', 4, 0)
@@ -277,33 +283,78 @@ function R:BuildUI(parent)
   minEdit:SetAutoFocus(false)
   minEdit:SetNumeric(true)
   minEdit:SetMaxLetters(2)
-  minEdit:SetText('00')
 
-  -- Create button behavior (uses calendar + time selectors)
+  local applyBtn = CreateFrame('Button', nil, fly, 'UIPanelButtonTemplate')
+  applyBtn:SetSize(80,22)
+  applyBtn:SetPoint('BOTTOMRIGHT', -10, 8)
+  applyBtn:SetText('Apply')
+
+  local cancelBtn = CreateFrame('Button', nil, fly, 'UIPanelButtonTemplate')
+  cancelBtn:SetSize(80,22)
+  cancelBtn:SetPoint('RIGHT', applyBtn, 'LEFT', -8, 0)
+  cancelBtn:SetText('Cancel')
+
+  -- Show/Hide wiring for dateBtn (dropdown behavior)
+  dateBtn:SetScript('OnClick', function()
+    if fly:IsShown() then
+      fly:Hide()
+    else
+      -- refresh with current selection each time we open
+      current.year, current.month = sel.year, sel.month
+      refreshCalendar()
+      hourEdit:SetText(string.format('%02d', sel.hour or 20))
+      minEdit:SetText(string.format('%02d', sel.min or 0))
+      fly:Show()
+    end
+  end)
+
+  cancelBtn:SetScript('OnClick', function() fly:Hide() end)
+
+  applyBtn:SetScript('OnClick', function()
+    -- Clamp time
+    local hh = tonumber(hourEdit:GetText()) or sel.hour or 20
+    local mm = tonumber(minEdit:GetText()) or sel.min or 0
+    if hh < 0 then hh = 0 elseif hh > 23 then hh = 23 end
+    if mm < 0 then mm = 0 elseif mm > 59 then mm = 59 end
+    sel.hour, sel.min = hh, mm
+    dateBtn:SetText(fmt())
+    fly:Hide()
+  end)
+
+  -- Initialize flyout once
+  refreshCalendar()
+  hourEdit:SetText(string.format('%02d', sel.hour))
+  minEdit:SetText(string.format('%02d', sel.min))
+
+  ----------------------------------------------------------------------
+  -- Create button behavior (uses selected Version, Raid, Date & Time)
+  ----------------------------------------------------------------------
   createBtn:SetScript('OnClick', function()
     if not U:HasPermission(GT.db.permissions.raidsMinRank) then
       UIErrorsFrame:AddMessage('Insufficient rank to create raids',1,0,0)
       return
     end
-    -- Guard: ensure a day is selected
+    -- Ensure date picked
     if not (sel.year and sel.month and sel.day) then
-      UIErrorsFrame:AddMessage('Please select a date on the calendar.',1,0,0)
+      UIErrorsFrame:AddMessage('Please select a date.',1,0,0)
       return
     end
-    local hh = tonumber(hourEdit:GetText()) or 0
-    local mm = tonumber(minEdit:GetText()) or 0
-    if hh < 0 then hh = 0 elseif hh > 23 then hh = 23 end
-    if mm < 0 then mm = 0 elseif mm > 59 then mm = 59 end
-
-    local ts = time({ year=sel.year, month=sel.month, day=sel.day, hour=hh, min=mm, sec=0 })
+    local ts = time({
+      year  = sel.year,
+      month = sel.month,
+      day   = sel.day,
+      hour  = sel.hour or 20,
+      min   = sel.min or 0,
+      sec   = 0,
+    })
     local instName = selectedRaid or "Other"
     createEvent(nameEdit:GetText(), ts, instName)
     R:Refresh()
   end)
 
-  -- Listing area (pushed lower for calendar height)
+  -- Listing area (pushed lower for the controls)
   local list = CreateFrame('Frame', nil, p, 'InsetFrameTemplate3')
-  list:SetPoint('TOPLEFT', 20, -360)
+  list:SetPoint('TOPLEFT', 20, -140)
   list:SetPoint('BOTTOMRIGHT', -20, 20)
 
   local scroll = CreateFrame('ScrollFrame', 'GTR_Scroll', list, 'UIPanelScrollFrameTemplate')
