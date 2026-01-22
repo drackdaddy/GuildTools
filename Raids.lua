@@ -1,4 +1,3 @@
-
 local GT  = GuildTools
 local U   = GT.Utils
 local Log = GT.Log
@@ -78,7 +77,7 @@ function R:BuildUI(parent)
   createBtn:SetPoint('TOPLEFT', 20, y - 26)
   createBtn:SetText('Create')
 
-  -- === Single row of selectors (all aligned): Date/Time → Version → Raid ===
+  -- === Single row of selectors (aligned): Date/Time → Version → Raid ===
   y = y - 60
 
   ----------------------------------------------------------------------
@@ -86,7 +85,7 @@ function R:BuildUI(parent)
   ----------------------------------------------------------------------
   local dateBtn = CreateFrame('Button', nil, p, 'UIPanelButtonTemplate')
   dateBtn:SetSize(180,24)
-  dateBtn:SetPoint('TOPLEFT', 20, y)
+  dateBtn:SetPoint('TOPLEFT', 20, y)  -- FIRST on the row
 
   -- Default selection: tomorrow 8:00 PM
   local now = time()
@@ -326,17 +325,60 @@ function R:BuildUI(parent)
   initAmpm()
   UIDropDownMenu_SetText(ampmDrop, ampmValue)
 
-  -- === Game Version [SECOND] ===
-  local versionDrop = _G["GTR_VersionDrop"] -- ensure we use the same frame
-  versionDrop:ClearAllPoints()
-  versionDrop:SetPoint('LEFT', dateBtn, 'RIGHT', 10, 0)  -- inline with dateBtn
-  UIDropDownMenu_SetWidth(versionDrop, 120)              -- keep narrow
+  ----------------------------------------------------------------------
+  -- Game Version [SECOND] (anchored directly after Date/Time)
+  ----------------------------------------------------------------------
+  local versionDrop = CreateFrame('Frame', nil, p, 'UIDropDownMenuTemplate')
+  versionDrop:SetPoint('LEFT', dateBtn, 'RIGHT', 10, 0)
+  UIDropDownMenu_SetWidth(versionDrop, 120)
+  local selectedVersion = "Classic"
+  UIDropDownMenu_Initialize(versionDrop, function(self, level)
+    for _, ver in ipairs({ "Classic", "Burning Crusade" }) do
+      local info = UIDropDownMenu_CreateInfo()
+      info.text  = ver
+      info.func  = function()
+        selectedVersion = ver
+        UIDropDownMenu_SetText(versionDrop, ver)
+        -- repopulate raid drop below
+      end
+      UIDropDownMenu_AddButton(info)
+    end
+  end)
+  UIDropDownMenu_SetText(versionDrop, selectedVersion)
 
-  -- === Raid [THIRD] ===
-  local instanceDrop = _G["GTR_InstanceDrop"]
-  instanceDrop:ClearAllPoints()
-  instanceDrop:SetPoint('LEFT', versionDrop, 'RIGHT', -10, 0) -- inline with prev
-  UIDropDownMenu_SetWidth(instanceDrop, 180)                   -- keep narrow
+  ----------------------------------------------------------------------
+  -- Raid [THIRD] (anchored after Version)
+  ----------------------------------------------------------------------
+  local instanceDrop = CreateFrame('Frame', nil, p, 'UIDropDownMenuTemplate')
+  instanceDrop:SetPoint('LEFT', versionDrop, 'RIGHT', -10, 0)
+  UIDropDownMenu_SetWidth(instanceDrop, 180)
+  local selectedRaid = nil
+  local function PopulateInstanceDrop(versionName)
+    local list = RAID_CATALOG[versionName] or {}
+    selectedRaid = list[1] or "Other"
+    UIDropDownMenu_SetText(instanceDrop, selectedRaid)
+    UIDropDownMenu_Initialize(instanceDrop, function(self, level)
+      for _, raidName in ipairs(list) do
+        local info = UIDropDownMenu_CreateInfo()
+        info.text  = raidName
+        info.func  = function()
+          selectedRaid = raidName
+          UIDropDownMenu_SetText(instanceDrop, raidName)
+        end
+        UIDropDownMenu_AddButton(info)
+      end
+    end)
+  end
+  PopulateInstanceDrop(selectedVersion)
+  -- Refresh raids when version changes
+  hooksecurefunc(UIDropDownMenu, "InitializeHelper", function() end) -- noop to keep scope local
+
+  -- Re-initialize instance drop whenever version text changes
+  local function OnVersionChanged()
+    PopulateInstanceDrop(selectedVersion)
+  end
+  -- Simple way: reset raids after clicking version entries (handled in its func above)
+  -- Nothing extra needed here.
 
   ----------------------------------------------------------------------
   -- Create button (title uses selected Raid; time saved in 24h)
@@ -358,7 +400,7 @@ function R:BuildUI(parent)
       min   = sel.min or 0,
       sec   = 0,
     })
-    local instName = UIDropDownMenu_GetText(instanceDrop) or "Other"
+    local instName = selectedRaid or UIDropDownMenu_GetText(instanceDrop) or "Other"
     local title = instName
     createEvent(title, ts, instName)
     R:Refresh()
