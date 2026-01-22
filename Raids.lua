@@ -1,3 +1,4 @@
+
 local GT  = GuildTools
 local U   = GT.Utils
 local Log = GT.Log
@@ -10,7 +11,7 @@ local INSTANCES = {
   'Molten Core','Blackwing Lair','Ahn\'Qiraj 40','Ruins of Ahn\'Qiraj','Naxxramas'
 }
 
--- WHY: Compute days in a month (handles leap years)
+-- WHY: Compute days in a given month (handles leap years)
 local function daysInMonth(year, month)
   local nm, ny = month + 1, year
   if nm == 13 then nm, ny = 1, year + 1 end
@@ -27,10 +28,9 @@ local function createEvent(title, ts, instance, size)
     ts=ts or time(),
     instance=instance or 'Karazhan',
     size=size or 10,
-    -- roles caps removed: keep empty table for future metadata if needed
-    roles={},                 -- NOTE: no caps; purely informational now
-    signups={},               -- name -> { player, class, role }
-    comp={}                   -- optional group assignments
+    roles={},     -- no caps; informational only
+    signups={},   -- name -> { player, class, role }
+    comp={}       -- optional group assignments
   }
   GT.db.events[id] = e
   GT.db.dataVersion = (GT.db.dataVersion or 1) + 1
@@ -58,13 +58,16 @@ function R:BuildUI(parent)
   nameEdit:SetText('Raid Title')
 
   -- ================================
-  -- DATE SELECTORS (STACKED: Year, Month, Day)
+  -- DATE SELECTORS (STACKED Year → Month → Day)
   -- ================================
   local now = time()
   local curYear  = tonumber(date('%Y', now))
   local curMonth = tonumber(date('%m', now))
   local curDay   = tonumber(date('%d', now))
   local sel = { year=curYear, month=curMonth, day=curDay }
+
+  -- Forward declare dayDrop so closures can reference it safely
+  local dayDrop
 
   -- Year (stack 1)
   y = y - 36
@@ -73,7 +76,7 @@ function R:BuildUI(parent)
   yearLbl:SetText('Year:')
 
   local yearDrop = CreateFrame('Frame', nil, p, 'UIDropDownMenuTemplate')
-  yearDrop:SetPoint('TOPLEFT', yearLbl, 'BOTTOMLEFT', -12, -2) -- dropdowns have left padding; offset -12 aligns text
+  yearDrop:SetPoint('TOPLEFT', yearLbl, 'BOTTOMLEFT', -12, -2)  -- offset for dropdown padding
   UIDropDownMenu_SetWidth(yearDrop, 100)
   UIDropDownMenu_SetText(yearDrop, tostring(curYear))
   UIDropDownMenu_Initialize(yearDrop, function(self, level)
@@ -83,10 +86,10 @@ function R:BuildUI(parent)
       info.func  = function()
         sel.year = yv
         UIDropDownMenu_SetText(yearDrop, info.text)
-        -- day may need clamp on leap year changes
+        -- clamp day for new year (e.g., leap year)
         local maxd = daysInMonth(sel.year, sel.month)
         if sel.day > maxd then sel.day = maxd end
-        UIDropDownMenu_SetText(dayDrop, tostring(sel.day))
+        if dayDrop then UIDropDownMenu_SetText(dayDrop, tostring(sel.day)) end
       end
       UIDropDownMenu_AddButton(info)
     end
@@ -110,7 +113,7 @@ function R:BuildUI(parent)
         UIDropDownMenu_SetText(monthDrop, info.text)
         local maxd = daysInMonth(sel.year, sel.month)
         if sel.day > maxd then sel.day = maxd end
-        UIDropDownMenu_SetText(dayDrop, tostring(sel.day))
+        if dayDrop then UIDropDownMenu_SetText(dayDrop, tostring(sel.day)) end
       end
       UIDropDownMenu_AddButton(info)
     end
@@ -136,7 +139,7 @@ function R:BuildUI(parent)
     end)
   end
 
-  local dayDrop = CreateFrame('Frame', nil, p, 'UIDropDownMenuTemplate')
+  dayDrop = CreateFrame('Frame', nil, p, 'UIDropDownMenuTemplate')
   dayDrop:SetPoint('TOPLEFT', dayLbl, 'BOTTOMLEFT', -12, -2)
   UIDropDownMenu_SetWidth(dayDrop, 90)
   UIDropDownMenu_SetText(dayDrop, tostring(curDay))
@@ -171,7 +174,7 @@ function R:BuildUI(parent)
     end
   end)
 
-  -- Size (kept, but no longer enforces caps during signup)
+  -- Size (label only; no caps)
   local sizeLbl = p:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
   sizeLbl:SetPoint('TOPLEFT', instanceDrop, 'BOTTOMLEFT', 12, -10)
   sizeLbl:SetText('Raid Size (label only):')
@@ -199,7 +202,8 @@ function R:BuildUI(parent)
       UIErrorsFrame:AddMessage('Insufficient rank to create raids',1,0,0)
       return
     end
-    -- Re-init day dropdown to match current month/year before reading it
+
+    -- Ensure day dropdown matches current month/year before reading it
     initDayDrop()
 
     local hh,mm = timeEdit:GetText():match('^(%d+):(%d+)$')
@@ -214,9 +218,9 @@ function R:BuildUI(parent)
     R:Refresh()
   end)
 
-  -- Listing area
+  -- Listing area (pushed lower to fit stacked selectors)
   local list = CreateFrame('Frame', nil, p, 'InsetFrameTemplate3')
-  list:SetPoint('TOPLEFT', 20, -360)        -- pushed lower to fit stacked selectors
+  list:SetPoint('TOPLEFT', 20, -360)
   list:SetPoint('BOTTOMRIGHT', -20, 20)
 
   local scroll = CreateFrame('ScrollFrame', 'GTR_Scroll', list, 'UIPanelScrollFrameTemplate')
@@ -451,7 +455,7 @@ function R:Refresh()
       build:SetSize(140,22)
       build:SetPoint('BOTTOMRIGHT', -10, 10)
       build:SetText('Build Raid Comp')
-      build:SetScript('OnClick', function() Comp:Open(e) end)
+      build:SetScript('OnClick', function() R.Comp:Open(e) end)
 
       local edit = CreateFrame('Button', nil, box, 'UIPanelButtonTemplate')
       edit:SetSize(80,22)
@@ -491,5 +495,6 @@ function R:Refresh()
 
     y = y - 150
   end
+
   content:SetHeight(-y + 20)
 end
