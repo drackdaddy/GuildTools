@@ -1,4 +1,3 @@
-
 local GT  = GuildTools
 local U   = GT.Utils
 local Log = GT.Log
@@ -81,14 +80,14 @@ function R:BuildUI(parent)
   -- Row: Version + Raid + Date (flyout opener)
   y = y - 60
 
-  -- Narrower dropdowns as requested
+  -- Narrower dropdowns
   local versionDrop = CreateFrame('Frame', 'GTR_VersionDrop', p, 'UIDropDownMenuTemplate')
   versionDrop:SetPoint('TOPLEFT', 20, y)
-  UIDropDownMenu_SetWidth(versionDrop, 120)  -- was wider, now narrower
+  UIDropDownMenu_SetWidth(versionDrop, 120)
 
   local instanceDrop = CreateFrame('Frame', 'GTR_InstanceDrop', p, 'UIDropDownMenuTemplate')
-  instanceDrop:SetPoint('LEFT', versionDrop, 'RIGHT', -10, 0) -- compensate dropdown padding
-  UIDropDownMenu_SetWidth(instanceDrop, 180)  -- was ~200+, now narrower
+  instanceDrop:SetPoint('LEFT', versionDrop, 'RIGHT', -10, 0)
+  UIDropDownMenu_SetWidth(instanceDrop, 180)
 
   -- Selected state for Version → Raid
   local selectedVersion = "Classic"
@@ -128,11 +127,11 @@ function R:BuildUI(parent)
   -- Date & Time "dropdown": a button that toggles a flyout calendar+time
   ----------------------------------------------------------------------
   local dateBtn = CreateFrame('Button', nil, p, 'UIPanelButtonTemplate')
-  dateBtn:SetSize(170,24)                                -- a bit narrower too
+  dateBtn:SetSize(180,24)
   dateBtn:SetPoint('LEFT', instanceDrop, 'RIGHT', 10, 0)
-  dateBtn:SetText('')  -- set below
+  dateBtn:SetText('')
 
-  -- Default selection: tomorrow 20:00
+  -- Default selection: tomorrow at 8:00 PM (20:00 in 24h)
   local now = time()
   local tomorrow = now + 24*3600
   local sel = {
@@ -142,18 +141,38 @@ function R:BuildUI(parent)
     hour  = 20,
     min   = 0,
   }
-  local function fmt()
-    return string.format('%04d-%02d-%02d  %02d:%02d', sel.year, sel.month, sel.day, sel.hour, sel.min)
-  end
-  dateBtn:SetText(fmt())
 
-  -- Flyout frame (ensure always on top of the posted-raids list)
+  local function to12h(h24)
+    local am = (h24 < 12)
+    local h12 = h24 % 12
+    if h12 == 0 then h12 = 12 end
+    return h12, am and "AM" or "PM"
+  end
+
+  local function to24h(h12, ampm)
+    local upper = (ampm == "PM")
+    if upper then
+      if h12 < 12 then return h12 + 12 end
+      return 12
+    else
+      if h12 == 12 then return 0 end
+      return h12
+    end
+  end
+
+  local function fmtBtn()
+    local h12, ap = to12h(sel.hour)
+    return string.format('%02d/%02d/%04d  %02d:%02d %s', sel.month, sel.day, sel.year, h12, sel.min, ap)
+  end
+  dateBtn:SetText(fmtBtn())
+
+  -- Flyout frame - on top
   local fly = CreateFrame('Frame', nil, p, 'InsetFrameTemplate3')
-  fly:SetSize(520, 308)  -- calendar + time row + buttons
+  fly:SetSize(520, 336)  -- calendar + 12h time + buttons
   fly:SetPoint('TOPLEFT', dateBtn, 'BOTTOMLEFT', 0, -2)
   fly:SetClampedToScreen(true)
   fly:SetToplevel(true)
-  fly:SetFrameStrata('TOOLTIP')              -- higher than DIALOG; appears on top
+  fly:SetFrameStrata('TOOLTIP')
   fly:SetFrameLevel((p:GetFrameLevel() or 0) + 200)
   fly:Hide()
   fly:SetScript('OnShow', function(self) self:Raise() end)
@@ -199,7 +218,7 @@ function R:BuildUI(parent)
   end
   for i=1,42 do makeCell(i) end
 
-  -- Selection highlight
+  -- Single selection highlight (only one at a time)
   fly.selectedIndex = nil
   local function setSelectedByIndex(idx)
     if fly.selectedIndex and fly.cells[fly.selectedIndex] then
@@ -228,6 +247,7 @@ function R:BuildUI(parent)
       b.day = n
       b.text:SetText(tostring(n))
       b:Enable()
+      -- Keep the selection if this grid contains the selected day
       if current.year == sel.year and current.month == sel.month and n == sel.day then
         setSelectedByIndex(i)
       end
@@ -239,6 +259,7 @@ function R:BuildUI(parent)
     local b = fly.cells[i]
     b:SetScript('OnClick', function(self)
       if not self.day then return end
+      -- Set the selected day and ensure ONLY this cell is highlighted
       sel.year, sel.month, sel.day = current.year, current.month, self.day
       setSelectedByIndex(self.index)
     end)
@@ -255,14 +276,14 @@ function R:BuildUI(parent)
     refreshCalendar()
   end)
 
-  -- Time selector under calendar
+  -- === 12-hour Time selector (HH:MM + AM/PM) under calendar ===
   local timeRow = CreateFrame('Frame', nil, fly)
   timeRow:SetPoint('TOPLEFT', 0, -260)
   timeRow:SetSize(520, 24)
 
   local timeLbl = timeRow:CreateFontString(nil,'OVERLAY','GameFontHighlight')
   timeLbl:SetPoint('LEFT', 12, 0)
-  timeLbl:SetText('Time (24h):')
+  timeLbl:SetText('Time:')
 
   local hourEdit = CreateFrame('EditBox', nil, timeRow, 'InputBoxTemplate')
   hourEdit:SetSize(36,22)
@@ -282,6 +303,27 @@ function R:BuildUI(parent)
   minEdit:SetNumeric(true)
   minEdit:SetMaxLetters(2)
 
+  -- AM/PM dropdown (compact)
+  local ampmDrop = CreateFrame('Frame', nil, timeRow, 'UIDropDownMenuTemplate')
+  ampmDrop:SetPoint('LEFT', minEdit, 'RIGHT', -16, 0)  -- adjust for dropdown padding
+  UIDropDownMenu_SetWidth(ampmDrop, 70)
+
+  local ampmValue = "PM"  -- default for 20:00
+  local function initAmpm()
+    UIDropDownMenu_Initialize(ampmDrop, function(self, level)
+      for _,val in ipairs({"AM","PM"}) do
+        local info = UIDropDownMenu_CreateInfo()
+        info.text = val
+        info.func = function()
+          ampmValue = val
+          UIDropDownMenu_SetText(ampmDrop, val)
+        end
+        UIDropDownMenu_AddButton(info)
+      end
+    end)
+  end
+
+  -- Control buttons
   local applyBtn = CreateFrame('Button', nil, fly, 'UIPanelButtonTemplate')
   applyBtn:SetSize(80,22)
   applyBtn:SetPoint('BOTTOMRIGHT', -10, 8)
@@ -297,29 +339,42 @@ function R:BuildUI(parent)
     if fly:IsShown() then
       fly:Hide()
     else
+      -- Prepare current month grid
       current.year, current.month = sel.year, sel.month
       refreshCalendar()
-      hourEdit:SetText(string.format('%02d', sel.hour or 20))
+      -- Seed time fields with current selection in 12h form
+      local h12, ap = to12h(sel.hour or 20)
+      hourEdit:SetText(string.format('%02d', h12))
       minEdit:SetText(string.format('%02d', sel.min or 0))
+      ampmValue = ap
+      initAmpm()
+      UIDropDownMenu_SetText(ampmDrop, ampmValue)
+
       fly:Show()
-      fly:Raise()  -- make sure it's above everything
+      fly:Raise()
     end
   end)
   cancelBtn:SetScript('OnClick', function() fly:Hide() end)
+
   applyBtn:SetScript('OnClick', function()
-    local hh = tonumber(hourEdit:GetText()) or sel.hour or 20
-    local mm = tonumber(minEdit:GetText()) or sel.min or 0
-    if hh < 0 then hh = 0 elseif hh > 23 then hh = 23 end
+    local h12 = tonumber(hourEdit:GetText()) or 12
+    local mm  = tonumber(minEdit:GetText()) or 0
+    if h12 < 1 then h12 = 1 elseif h12 > 12 then h12 = 12 end
     if mm < 0 then mm = 0 elseif mm > 59 then mm = 59 end
-    sel.hour, sel.min = hh, mm
-    dateBtn:SetText(fmt())
+    local h24 = to24h(h12, ampmValue or "AM")
+    sel.hour, sel.min = h24, mm
+    dateBtn:SetText(fmtBtn())
     fly:Hide()
   end)
 
   -- Initialize flyout once
   refreshCalendar()
-  hourEdit:SetText(string.format('%02d', sel.hour))
+  local h12Init, apInit = to12h(sel.hour)
+  hourEdit:SetText(string.format('%02d', h12Init))
   minEdit:SetText(string.format('%02d', sel.min))
+  ampmValue = apInit
+  initAmpm()
+  UIDropDownMenu_SetText(ampmDrop, ampmValue)
 
   ----------------------------------------------------------------------
   -- Create button behavior (uses selected Raid as title)
@@ -342,7 +397,7 @@ function R:BuildUI(parent)
       sec   = 0,
     })
     local instName = selectedRaid or "Other"
-    local title = instName                          -- no free-text title; use raid name
+    local title = instName
     createEvent(title, ts, instName)
     R:Refresh()
   end)
