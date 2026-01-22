@@ -1,4 +1,3 @@
-
 local GT = GuildTools
 local Log = GT.Log
 
@@ -8,12 +7,13 @@ local UI = GT.Logs
 -- Registry so we subscribe once and refresh any visible Sync widget(s)
 UI._syncWidgets    = UI._syncWidgets    or {}
 UI._syncSubscribed = UI._syncSubscribed or false
+UI._logSubscribed  = UI._logSubscribed  or false
 
 local function addRow(parent, y, text)
   local fs = parent:CreateFontString(nil, 'OVERLAY', 'GameFontHighlightSmall')
   fs:SetPoint('TOPLEFT', 6, y)
   fs:SetJustifyH('LEFT')
-  fs:SetWordWrap(false)            -- single-line; prevents wrap-induced overlap
+  fs:SetWordWrap(false)          -- single-line to prevent wrap-induced collisions
   fs:SetText(text)
   return fs
 end
@@ -58,3 +58,108 @@ function UI:BuildUI(parent)
       if UI.parent then UI:Refresh(true) end
     end)
     UI._logSubscribed = true
+  end
+end
+
+function UI:Refresh(appendOnly)
+  if not UI.parent then return end
+  local content = UI.parent.content
+  if not appendOnly then
+    for _,c in ipairs({content:GetChildren()}) do c:Hide(); c:SetParent(nil) end
+  end
+
+  local y = -2
+  local logs = Log:GetAll()
+  local lastN = 300
+  local start = math.max(1, #logs - lastN + 1)
+
+  for i = start, #logs do
+    local e = logs[i]
+    local line = string.format('|cffaaaaaa%s|r |cff00ff00[%s]|r |cffffff00[%s]|r %s',
+      date('%H:%M:%S', e.ts), e.level, e.cat, e.msg)
+    addRow(content, y, line)
+    y = y - 14
+  end
+
+  content:SetHeight(-y + 10)
+end
+
+-- ============================================
+-- Sync widget (NEWEST ON TOP, no “shadow” text)
+-- ============================================
+
+-- Internal: render a Sync widget by replacing the content frame each time.
+local function RefreshSyncWidget(widget)
+  if not widget or not widget.syncScroll or not widget.box then return end
+
+  -- 1) DESTROY the previous content and create a fresh scroll child
+  local oldContent = widget.syncContent
+  if oldContent then
+    for _,child in ipairs({oldContent:GetChildren()}) do child:Hide(); child:SetParent(nil) end
+    oldContent:Hide()
+    oldContent:SetParent(nil)
+  end
+
+  local content = CreateFrame('Frame', nil, widget.syncScroll)
+  content:SetSize(1,1)
+  -- Ensure the content renders above the inset background
+  content:SetFrameLevel(widget.box:GetFrameLevel() + 1)
+
+  widget.syncScroll:SetScrollChild(content)
+  widget.syncContent = content
+
+  -- 2) Render NEWEST at TOP (top-down order)
+  local logs = Log:GetAll({cat='SYNC'})
+  local lastN = 100
+  local startIdx = math.max(1, #logs - lastN + 1)
+
+  local y = -2
+  for i = #logs, startIdx, -1 do
+    local e = logs[i]
+    local line = string.format('|cffaaaaaa%s|r |cff00ff00[%s]|r %s',
+      date('%H:%M:%S', e.ts), e.level, e.msg)
+    addRow(content, y, line)
+    y = y - 14
+  end
+
+  content:SetHeight(-y + 10)
+
+  -- 3) Force the ScrollFrame to recompute its region then snap to TOP
+  widget.syncScroll:UpdateScrollChildRect()
+  widget.syncScroll:SetVerticalScroll(0)
+end
+
+function UI:BuildSyncWidget(parent)
+  -- Lowered to avoid overlapping the "Sync Now" button and its helper text
+  local box = CreateFrame('Frame', nil, parent, 'InsetFrameTemplate3')
+  box:SetPoint('TOPLEFT', 20, -90)
+  box:SetPoint('BOTTOMRIGHT', -20, 20)
+
+  local scroll = CreateFrame('ScrollFrame', nil, box, 'UIPanelScrollFrameTemplate')
+  scroll:SetPoint('TOPLEFT', 10, -10)
+  scroll:SetPoint('BOTTOMRIGHT', -30, 10)
+
+  -- Keep references on the parent for refreshes
+  parent.box        = box
+  parent.syncScroll = scroll
+  parent.syncContent = nil -- created on first refresh
+
+  -- Track this widget; remove when hidden to avoid stale references
+  UI._syncWidgets[parent] = true
+  parent:HookScript('OnHide', function() UI._syncWidgets[parent] = nil end)
+
+  RefreshSyncWidget(parent)
+
+  -- Single global subscription; refresh all visible widgets on SYNC entry
+  if not UI._syncSubscribed then
+    Log:Register(function(e)
+      if e and e.cat ~= 'SYNC' then return end
+      for frame in pairs(UI._syncWidgets) do
+        if frame and frame:IsShown() then
+          RefreshSyncWidget(frame)
+        end
+      end
+    end)
+    UI._syncSubscribed = true
+  end
+end
