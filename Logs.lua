@@ -1,28 +1,30 @@
-local GT = GuildTools
+local GT  = GuildTools
 local Log = GT.Log
 
 GT.Logs = GT.Logs or {}
 local UI = GT.Logs
 
--- Registries so we subscribe once and refresh visible widgets
-UI._syncWidgets    = UI._syncWidgets    or {}
-UI._syncSubscribed = UI._syncSubscribed or false
+-- Subscriptions/registries to avoid duplicate listeners
 UI._logSubscribed  = UI._logSubscribed  or false
+UI._syncSubscribed = UI._syncSubscribed or false
+UI._syncWidgets    = UI._syncWidgets    or {}
 
+-- Small helper to draw a single log line
 local function addRow(parent, y, text)
   local fs = parent:CreateFontString(nil, 'OVERLAY', 'GameFontHighlightSmall')
   fs:SetPoint('TOPLEFT', 6, y)
   fs:SetJustifyH('LEFT')
-  fs:SetWordWrap(false)          -- single-line; avoids wrap-induced overlap
+  fs:SetWordWrap(false) -- one line per entry to avoid wrap collisions
   fs:SetText(text)
   return fs
 end
 
--- =========================
--- Logs tab (NEWEST ON TOP)
--- =========================
+-- =====================================================
+-- Logs tab (EVENT LOGS) — NEWEST ON TOP, no “ghosting”
+-- =====================================================
 function UI:BuildUI(parent)
-  local p = CreateFrame('Frame', nil, parent) p:SetAllPoints(true)
+  local p = CreateFrame('Frame', nil, parent)
+  p:SetAllPoints(true)
 
   local title = p:CreateFontString(nil,'OVERLAY','GameFontNormalLarge')
   title:SetPoint('TOPLEFT',20,-20)
@@ -41,68 +43,84 @@ function UI:BuildUI(parent)
   list:SetPoint('TOPLEFT', 20, -60)
   list:SetPoint('BOTTOMRIGHT', -20, 20)
 
+  -- Anonymous ScrollFrame to avoid global name collisions
   local scroll = CreateFrame('ScrollFrame', nil, list, 'UIPanelScrollFrameTemplate')
   scroll:SetPoint('TOPLEFT', 10, -10)
   scroll:SetPoint('BOTTOMRIGHT', -30, 10)
 
-  local content = CreateFrame('Frame', nil, scroll)
-  content:SetSize(1,1)
-  scroll:SetScrollChild(content)
-  p.content = content
-  p.scroll  = scroll
+  -- We will recreate the scroll child in Refresh() each time
+  p.scroll       = scroll
+  p.content      = nil
 
   UI.parent = p
   UI:Refresh()
 
+  -- Single global subscription for event logs tab updates
   if not UI._logSubscribed then
     Log:Register(function()
-      if UI.parent then UI:Refresh(true) end
+      if UI.parent and UI.parent:IsShown() then
+        UI:Refresh(true) -- fast path (still recreates child to avoid ghosting)
+      end
     end)
     UI._logSubscribed = true
   end
 end
 
-function UI:Refresh(appendOnly)
-  if not UI.parent then return end
-  local content = UI.parent.content
-  local scroll  = UI.parent.scroll
+-- Internal: (Re)build event log content (NEWEST ON TOP) safely
+local function RebuildEventLogContent(p)
+  if not p or not p.scroll then return end
 
-  if not appendOnly then
-    for _,c in ipairs({content:GetChildren()}) do c:Hide(); c:SetParent(nil) end
+  -- DESTROY the previous content frame entirely to ensure no ghost lines remain
+  local old = p.content
+  if old then
+    for _,child in ipairs({old:GetChildren()}) do child:Hide(); child:SetParent(nil) end
+    old:Hide()
+    old:SetParent(nil)
   end
 
-  -- Render NEWEST at TOP (top-down)
-  local logs  = Log:GetAll()
-  local lastN = 300
-  local startIdx = math.max(1, #logs - lastN + 1)
+  local content = CreateFrame('Frame', nil, p.scroll)
+  content:SetSize(1,1)
+  -- Ensure text appears above inset visuals
+  content:SetFrameLevel((p:GetFrameLevel() or 0) + 2)
+
+  p.scroll:SetScrollChild(content)
+  p.content = content
+
+  -- Collect logs and render NEWEST at TOP (top‑down)
+  local logs   = Log:GetAll()
+  local lastN  = 300
+  local startI = math.max(1, #logs - lastN + 1)
 
   local y = -2
-  for i = #logs, startIdx, -1 do
+  for i = #logs, startI, -1 do
     local e = logs[i]
-    local line = string.format(
-      '|cffaaaaaa%s|r |cff00ff00[%s]|r |cffffff00[%s]|r %s',
-      date('%H:%M:%S', e.ts), e.level, e.cat, e.msg
-    )
+    local line = string.format('|cffaaaaaa%s|r |cff00ff00[%s]|r |cffffff00[%s]|r %s',
+      date('%H:%M:%S', e.ts), e.level, e.cat, e.msg)
     addRow(content, y, line)
     y = y - 14
   end
 
   content:SetHeight(-y + 10)
-  if scroll and scroll.UpdateScrollChildRect then
-    scroll:UpdateScrollChildRect()
-    scroll:SetVerticalScroll(0)  -- snap to top so newest is visible
+  if p.scroll.UpdateScrollChildRect then
+    p.scroll:UpdateScrollChildRect()
   end
+  p.scroll:SetVerticalScroll(0) -- snap to TOP so newest is visible
 end
 
--- ============================================
--- Sync widget (NEWEST ON TOP, no “shadow” text)
--- ============================================
+function UI:Refresh(_appendOnly)
+  if not UI.parent or not UI.parent.scroll then return end
+  -- Always rebuild the content to guarantee no stale font strings remain
+  RebuildEventLogContent(UI.parent)
+end
+
+-- ======================================================
+-- Sync widget (already NEWEST ON TOP) – keep as before
+-- ======================================================
 
 -- Internal: render a Sync widget by replacing the content frame each time.
 local function RefreshSyncWidget(widget)
   if not widget or not widget.syncScroll or not widget.box then return end
 
-  -- DESTROY the previous content and create a fresh scroll child
   local oldContent = widget.syncContent
   if oldContent then
     for _,child in ipairs({oldContent:GetChildren()}) do child:Hide(); child:SetParent(nil) end
@@ -116,18 +134,15 @@ local function RefreshSyncWidget(widget)
   widget.syncScroll:SetScrollChild(content)
   widget.syncContent = content
 
-  -- NEWEST at TOP (top-down)
-  local logs  = Log:GetAll({cat='SYNC'})
-  local lastN = 100
-  local startIdx = math.max(1, #logs - lastN + 1)
+  local logs   = Log:GetAll({cat='SYNC'})
+  local lastN  = 100
+  local startI = math.max(1, #logs - lastN + 1)
 
   local y = -2
-  for i = #logs, startIdx, -1 do
+  for i = #logs, startI, -1 do
     local e = logs[i]
-    local line = string.format(
-      '|cffaaaaaa%s|r |cff00ff00[%s]|r %s',
-      date('%H:%M:%S', e.ts), e.level, e.msg
-    )
+    local line = string.format('|cffaaaaaa%s|r |cff00ff00[%s]|r %s',
+      date('%H:%M:%S', e.ts), e.level, e.msg)
     addRow(content, y, line)
     y = y - 14
   end
