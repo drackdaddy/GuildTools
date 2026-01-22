@@ -1,5 +1,5 @@
-local GT = GuildTools
-local U  = GT.Utils
+local GT  = GuildTools
+local U   = GT.Utils
 local Log = GT.Log
 
 GT.Raids = GT.Raids or {}
@@ -10,21 +10,28 @@ local INSTANCES = {
   'Molten Core','Blackwing Lair','Ahn\'Qiraj 40','Ruins of Ahn\'Qiraj','Naxxramas'
 }
 
--- WHY: Utility for calendar selector (compute correct day count incl. leap years)
+-- WHY: Compute days in a month (handles leap years)
 local function daysInMonth(year, month)
-  -- Trick: go to first day of next month, subtract 1 day.
-  local nextMonth = month + 1
-  local nextYear  = year
-  if nextMonth == 13 then nextMonth = 1; nextYear = year + 1 end
-  local lastOfMonth = time({year=nextYear, month=nextMonth, day=1, hour=0, min=0, sec=0}) - 24*3600
-  return tonumber(date('%d', lastOfMonth))
+  local nm, ny = month + 1, year
+  if nm == 13 then nm, ny = 1, year + 1 end
+  local last = time({year=ny, month=nm, day=1, hour=0, min=0, sec=0}) - 24*3600
+  return tonumber(date('%d', last))
 end
 
--- WHY: Create event record and broadcast
-local function createEvent(title, ts, instance, size, roles)
+-- WHY: Create a new raid event; role caps removed (unlimited signups)
+local function createEvent(title, ts, instance, size)
   local id = U:NewId('evt')
-  local e = { id=id, title=title or 'Raid', ts=ts or time(), instance=instance or 'Karazhan', size=size or 10,
-              roles=roles or {tanks=2,heals=3,dps=5}, signups={}, comp={} }
+  local e = {
+    id=id,
+    title=title or 'Raid',
+    ts=ts or time(),
+    instance=instance or 'Karazhan',
+    size=size or 10,
+    -- roles caps removed: keep empty table for future metadata if needed
+    roles={},                 -- NOTE: no caps; purely informational now
+    signups={},               -- name -> { player, class, role }
+    comp={}                   -- optional group assignments
+  }
   GT.db.events[id] = e
   GT.db.dataVersion = (GT.db.dataVersion or 1) + 1
   if GT.Comm then GT.Comm:Send('EVENT_UPDATE', U:Serialize(e)) end
@@ -38,66 +45,37 @@ function R:BuildUI(parent)
   parent.container = p
 
   local y = -20
-  local title = p:CreateFontString(nil,'OVERLAY','GameFontNormalLarge')
-  title:SetPoint('TOPLEFT',20,y)
-  title:SetText('Create Raid Event')
+  local header = p:CreateFontString(nil,'OVERLAY','GameFontNormalLarge')
+  header:SetPoint('TOPLEFT',20,y)
+  header:SetText('Create Raid Event')
 
   y = y - 30
-  -- Title input
+  -- Title
   local nameEdit = CreateFrame('EditBox', nil, p, 'InputBoxTemplate')
-  nameEdit:SetSize(220,24)
+  nameEdit:SetSize(260,24)
   nameEdit:SetPoint('TOPLEFT',20,y)
   nameEdit:SetAutoFocus(false)
   nameEdit:SetText('Raid Title')
 
   -- ================================
-  -- REPLACE free-text date with a simple calendar selector (Year/Month/Day)
-  -- WHY: Avoid invalid dates and improve UX by selecting via dropdowns.
+  -- DATE SELECTORS (STACKED: Year, Month, Day)
   -- ================================
   local now = time()
   local curYear  = tonumber(date('%Y', now))
   local curMonth = tonumber(date('%m', now))
   local curDay   = tonumber(date('%d', now))
-
-  -- Month dropdown
-  local monthDrop = CreateFrame('Frame', nil, p, 'UIDropDownMenuTemplate')
-  monthDrop:SetPoint('LEFT', nameEdit, 'RIGHT', 10, 0)
-  UIDropDownMenu_SetWidth(monthDrop, 130)
-  UIDropDownMenu_SetText(monthDrop, date('%B', now))
-
-  -- Year dropdown (current year +/- 2 for convenience)
-  local yearDrop = CreateFrame('Frame', nil, p, 'UIDropDownMenuTemplate')
-  yearDrop:SetPoint('LEFT', monthDrop, 'RIGHT', -10, 0) -- overlap tweak (dropdown has padding)
-  UIDropDownMenu_SetWidth(yearDrop, 90)
-  UIDropDownMenu_SetText(yearDrop, tostring(curYear))
-
-  -- Day dropdown (will be repopulated when month/year change)
-  local dayDrop = CreateFrame('Frame', nil, p, 'UIDropDownMenuTemplate')
-  dayDrop:SetPoint('LEFT', yearDrop, 'RIGHT', -10, 0)
-  UIDropDownMenu_SetWidth(dayDrop, 80)
-  UIDropDownMenu_SetText(dayDrop, tostring(curDay))
-
-  -- Local state for the selector
   local sel = { year=curYear, month=curMonth, day=curDay }
 
-  -- Populate Month dropdown
-  UIDropDownMenu_Initialize(monthDrop, function(self, level)
-    for m=1,12 do
-      local info = UIDropDownMenu_CreateInfo()
-      info.text  = date('%B', time({year=curYear, month=m, day=1}))
-      info.func  = function()
-        sel.month = m
-        UIDropDownMenu_SetText(monthDrop, info.text)
-        -- Rebuild day choices to respect month length
-        local maxd = daysInMonth(sel.year, sel.month)
-        if sel.day > maxd then sel.day = maxd end
-        UIDropDownMenu_SetText(dayDrop, tostring(sel.day))
-      end
-      UIDropDownMenu_AddButton(info)
-    end
-  end)
+  -- Year (stack 1)
+  y = y - 36
+  local yearLbl = p:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
+  yearLbl:SetPoint('TOPLEFT',20,y)
+  yearLbl:SetText('Year:')
 
-  -- Populate Year dropdown (current year +/- 2)
+  local yearDrop = CreateFrame('Frame', nil, p, 'UIDropDownMenuTemplate')
+  yearDrop:SetPoint('TOPLEFT', yearLbl, 'BOTTOMLEFT', -12, -2) -- dropdowns have left padding; offset -12 aligns text
+  UIDropDownMenu_SetWidth(yearDrop, 100)
+  UIDropDownMenu_SetText(yearDrop, tostring(curYear))
   UIDropDownMenu_Initialize(yearDrop, function(self, level)
     for yv = curYear-2, curYear+2 do
       local info = UIDropDownMenu_CreateInfo()
@@ -105,7 +83,7 @@ function R:BuildUI(parent)
       info.func  = function()
         sel.year = yv
         UIDropDownMenu_SetText(yearDrop, info.text)
-        -- Adjust days for new year (leap years)
+        -- day may need clamp on leap year changes
         local maxd = daysInMonth(sel.year, sel.month)
         if sel.day > maxd then sel.day = maxd end
         UIDropDownMenu_SetText(dayDrop, tostring(sel.day))
@@ -114,7 +92,35 @@ function R:BuildUI(parent)
     end
   end)
 
-  -- Populate Day dropdown (dynamic length)
+  -- Month (stack 2)
+  local monthLbl = p:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
+  monthLbl:SetPoint('TOPLEFT', yearDrop, 'BOTTOMLEFT', 12, -10)
+  monthLbl:SetText('Month:')
+
+  local monthDrop = CreateFrame('Frame', nil, p, 'UIDropDownMenuTemplate')
+  monthDrop:SetPoint('TOPLEFT', monthLbl, 'BOTTOMLEFT', -12, -2)
+  UIDropDownMenu_SetWidth(monthDrop, 140)
+  UIDropDownMenu_SetText(monthDrop, date('%B', time({year=sel.year, month=sel.month, day=1})))
+  UIDropDownMenu_Initialize(monthDrop, function(self, level)
+    for m=1,12 do
+      local info = UIDropDownMenu_CreateInfo()
+      info.text  = date('%B', time({year=sel.year, month=m, day=1}))
+      info.func  = function()
+        sel.month = m
+        UIDropDownMenu_SetText(monthDrop, info.text)
+        local maxd = daysInMonth(sel.year, sel.month)
+        if sel.day > maxd then sel.day = maxd end
+        UIDropDownMenu_SetText(dayDrop, tostring(sel.day))
+      end
+      UIDropDownMenu_AddButton(info)
+    end
+  end)
+
+  -- Day (stack 3)
+  local dayLbl = p:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
+  dayLbl:SetPoint('TOPLEFT', monthDrop, 'BOTTOMLEFT', 12, -10)
+  dayLbl:SetText('Day:')
+
   local function initDayDrop()
     UIDropDownMenu_Initialize(dayDrop, function(self, level)
       local maxd = daysInMonth(sel.year, sel.month)
@@ -129,19 +135,32 @@ function R:BuildUI(parent)
       end
     end)
   end
+
+  local dayDrop = CreateFrame('Frame', nil, p, 'UIDropDownMenuTemplate')
+  dayDrop:SetPoint('TOPLEFT', dayLbl, 'BOTTOMLEFT', -12, -2)
+  UIDropDownMenu_SetWidth(dayDrop, 90)
+  UIDropDownMenu_SetText(dayDrop, tostring(curDay))
   initDayDrop()
 
-  -- Time edit (keep as HH:MM)
+  -- Time (HH:MM)
+  local timeLbl = p:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
+  timeLbl:SetPoint('TOPLEFT', dayDrop, 'BOTTOMLEFT', 12, -10)
+  timeLbl:SetText('Time (24h):')
+
   local timeEdit = CreateFrame('EditBox', nil, p, 'InputBoxTemplate')
   timeEdit:SetSize(90,24)
-  timeEdit:SetPoint('LEFT', dayDrop, 'RIGHT', 10, 0)
+  timeEdit:SetPoint('TOPLEFT', timeLbl, 'BOTTOMLEFT', 0, -2)
   timeEdit:SetAutoFocus(false)
   timeEdit:SetText('20:00')
 
-  -- Instance dropdown
+  -- Instance
+  local instLbl = p:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
+  instLbl:SetPoint('TOPLEFT', timeEdit, 'BOTTOMLEFT', 0, -10)
+  instLbl:SetText('Instance:')
+
   local instanceDrop = CreateFrame('Frame', 'GTR_InstanceDrop', p, 'UIDropDownMenuTemplate')
-  instanceDrop:SetPoint('LEFT', timeEdit, 'RIGHT', 10, 0)
-  UIDropDownMenu_SetWidth(instanceDrop, 180)
+  instanceDrop:SetPoint('TOPLEFT', instLbl, 'BOTTOMLEFT', -12, -2)
+  UIDropDownMenu_SetWidth(instanceDrop, 220)
   UIDropDownMenu_SetText(instanceDrop, 'Karazhan')
   UIDropDownMenu_Initialize(instanceDrop, function(self, level)
     for _,inst in ipairs(INSTANCES) do
@@ -152,10 +171,14 @@ function R:BuildUI(parent)
     end
   end)
 
-  -- Size dropdown
+  -- Size (kept, but no longer enforces caps during signup)
+  local sizeLbl = p:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
+  sizeLbl:SetPoint('TOPLEFT', instanceDrop, 'BOTTOMLEFT', 12, -10)
+  sizeLbl:SetText('Raid Size (label only):')
+
   local sizeDrop = CreateFrame('Frame', 'GTR_SizeDrop', p, 'UIDropDownMenuTemplate')
-  sizeDrop:SetPoint('LEFT', instanceDrop, 'RIGHT', 10, 0)
-  UIDropDownMenu_SetWidth(sizeDrop, 80)
+  sizeDrop:SetPoint('TOPLEFT', sizeLbl, 'BOTTOMLEFT', -12, -2)
+  UIDropDownMenu_SetWidth(sizeDrop, 120)
   UIDropDownMenu_SetText(sizeDrop, '10')
   UIDropDownMenu_Initialize(sizeDrop, function(self, level)
     for _,sz in ipairs({10,25,40}) do
@@ -166,68 +189,34 @@ function R:BuildUI(parent)
     end
   end)
 
-  y = y - 40
-  local label = p:CreateFontString(nil,'OVERLAY','GameFontHighlight')
-  label:SetPoint('TOPLEFT',20,y)
-  label:SetText('Roles (T/H/D):')
-
-  local tanks = CreateFrame('EditBox', nil, p, 'InputBoxTemplate')
-  tanks:SetSize(40,24)
-  tanks:SetPoint('LEFT', label, 'RIGHT', 10, 0)
-  tanks:SetNumeric(true)
-  tanks:SetNumber(2)
-
-  local heals = CreateFrame('EditBox', nil, p, 'InputBoxTemplate')
-  heals:SetSize(40,24)
-  heals:SetPoint('LEFT', tanks, 'RIGHT', 5, 0)
-  heals:SetNumeric(true)
-  heals:SetNumber(3)
-
-  local dps = CreateFrame('EditBox', nil, p, 'InputBoxTemplate')
-  dps:SetSize(40,24)
-  dps:SetPoint('LEFT', heals, 'RIGHT', 5, 0)
-  dps:SetNumeric(true)
-  dps:SetNumber(5)
-
+  -- Create button
   local createBtn = CreateFrame('Button', nil, p, 'UIPanelButtonTemplate')
-  createBtn:SetSize(120,24)
-  createBtn:SetPoint('LEFT', dps, 'RIGHT', 10, 0)
+  createBtn:SetSize(140,24)
+  createBtn:SetPoint('TOPLEFT', sizeDrop, 'BOTTOMLEFT', 12, -14)
   createBtn:SetText('Create')
   createBtn:SetScript('OnClick', function()
     if not U:HasPermission(GT.db.permissions.raidsMinRank) then
       UIErrorsFrame:AddMessage('Insufficient rank to create raids',1,0,0)
       return
     end
-    -- Build timestamp from calendar selector + time
+    -- Re-init day dropdown to match current month/year before reading it
+    initDayDrop()
+
     local hh,mm = timeEdit:GetText():match('^(%d+):(%d+)$')
     hh, mm = tonumber(hh or '20'), tonumber(mm or '00')
-
-    -- Guard against invalid time values
     if not hh or not mm or hh > 23 or mm > 59 then
       UIErrorsFrame:AddMessage('Invalid time. Use HH:MM (24h).',1,0,0)
       return
     end
 
-    -- Ensure day dropdown reflects current month/year selection
-    initDayDrop()
-
-    local ts = time({
-      year = sel.year,
-      month = sel.month,
-      day   = sel.day,
-      hour  = hh,
-      min   = mm,
-      sec   = 0
-    })
-
-    local roles = { tanks=tanks:GetNumber(), heals=heals:GetNumber(), dps=dps:GetNumber() }
-    createEvent(nameEdit:GetText(), ts, UIDropDownMenu_GetText(instanceDrop), tonumber(UIDropDownMenu_GetText(sizeDrop)), roles)
+    local ts = time({year=sel.year, month=sel.month, day=sel.day, hour=hh, min=mm, sec=0})
+    createEvent(nameEdit:GetText(), ts, UIDropDownMenu_GetText(instanceDrop), tonumber(UIDropDownMenu_GetText(sizeDrop)))
     R:Refresh()
   end)
 
-  -- Listing container
+  -- Listing area
   local list = CreateFrame('Frame', nil, p, 'InsetFrameTemplate3')
-  list:SetPoint('TOPLEFT', 20, -140)
+  list:SetPoint('TOPLEFT', 20, -360)        -- pushed lower to fit stacked selectors
   list:SetPoint('BOTTOMRIGHT', -20, 20)
 
   local scroll = CreateFrame('ScrollFrame', 'GTR_Scroll', list, 'UIPanelScrollFrameTemplate')
@@ -399,11 +388,12 @@ function R:Refresh()
     title:SetPoint('TOPLEFT', 10, -8)
     title:SetText(string.format('%s  |  %s  |  %s  |  %d-man', e.title, e.instance, date('%b %d %H:%M', e.ts), e.size))
 
+    -- Unlimited signup view: show current counts only (no caps)
     local counts = {tanks=0, heals=0, dps=0}
     for _,s in pairs(e.signups) do counts[s.role] = (counts[s.role] or 0)+1 end
     local status = box:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
     status:SetPoint('TOPRIGHT', -10, -10)
-    status:SetText(string.format('T:%d/%d  H:%d/%d  D:%d/%d', counts.tanks, e.roles.tanks, counts.heals, e.roles.heals, counts.dps, e.roles.dps))
+    status:SetText(string.format('T:%d  H:%d  D:%d', counts.tanks or 0, counts.heals or 0, counts.dps or 0))
 
     local detailsBtn = CreateFrame('Button', nil, box, 'UIPanelButtonTemplate')
     detailsBtn:SetSize(70,20)
@@ -412,7 +402,7 @@ function R:Refresh()
     box.detailsShown = false
     detailsBtn:SetScript('OnClick', function()
       box.detailsShown = not box.detailsShown
-      if box.detailsShown then detailsBtn:SetText('Hide') else detailsBtn:SetText('Details') end
+      detailsBtn:SetText(box.detailsShown and 'Hide' or 'Details')
       if box.detailFrame then box.detailFrame:SetShown(box.detailsShown) end
     end)
 
@@ -434,8 +424,11 @@ function R:Refresh()
       table.sort(names)
       line:SetText(table.concat(names, ', '))
     end
-    addRole('Tanks','tanks', 0); addRole('Heals','heals', 220); addRole('DPS','dps', 440)
+    addRole('Tanks','tanks', 0)
+    addRole('Heals','heals', 220)
+    addRole('DPS','dps', 440)
 
+    -- Role sign buttons (unlimited)
     local roles = {'tanks','heals','dps'}
     for i,role in ipairs(roles) do
       local b = CreateFrame('Button', nil, box, 'UIPanelButtonTemplate')
@@ -472,7 +465,7 @@ function R:Refresh()
             if GT.Comm then GT.Comm:Send('EVENT_UPDATE', U:Serialize(e)) end
             if Log then Log:Add('INFO','EVENT','Renamed event '..e.id..' to '..e.title) end
             R:Refresh()
-          end,
+          end
         }
         local dlg = StaticPopup_Show('GTR_EDIT_TITLE')
         if dlg and dlg.editBox then dlg.editBox:SetText(e.title or '') end
@@ -499,4 +492,3 @@ function R:Refresh()
     y = y - 150
   end
   content:SetHeight(-y + 20)
-end
