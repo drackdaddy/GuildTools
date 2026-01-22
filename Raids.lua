@@ -1,3 +1,4 @@
+
 local GT  = GuildTools
 local U   = GT.Utils
 local Log = GT.Log
@@ -5,43 +6,42 @@ local Log = GT.Log
 GT.Raids = GT.Raids or {}
 local R = GT.Raids
 
--- Fallback list used only if Encounter Journal APIs are unavailable
-local FALLBACK_RAIDS = {
-  'Karazhan','Gruul\'s Lair','Magtheridon\'s Lair','Serpentshrine Cavern','Tempest Keep: The Eye','Hyjal Summit','Black Temple','Zul\'Aman','Sunwell Plateau',
-  'Molten Core','Blackwing Lair','Ahn\'Qiraj 40','Ruins of Ahn\'Qiraj','Naxxramas'
-}
+-- Fallback list used only if Encounter Journal APIs are unavailable or return nothing.
+-- Per request, this is a single generic option.
+local FALLBACK_RAIDS = { "Other" }
 
--- Dynamically enumerate raid instances using Encounter Journal.
--- This works on modern clients that expose EJ_* APIs. If unavailable,
--- we return the fallback list above.
+-- Dynamically enumerate raid instances using Encounter Journal (EJ) when possible.
+-- If EJ APIs are unavailable or return nothing, we fall back to {"Other"}.
 local function GetAvailableRaids()
   local result = {}
 
-  -- Some clients require the EJ add-on to be loaded before EJ_* calls return data.
+  -- If EJ APIs aren’t present on this client/era, use fallback.
   if not _G.EJ_GetInstanceByIndex then
-    -- Encounter Journal API not present: Classic-era or older client
     for _,name in ipairs(FALLBACK_RAIDS) do
       table.insert(result, { name = name, id = 0 })
     end
     return result
   end
 
-  if not IsAddOnLoaded("Blizzard_EncounterJournal") and C_AddOns and C_AddOns.LoadAddOn then
-    C_AddOns.LoadAddOn("Blizzard_EncounterJournal")
-  elseif not IsAddOnLoaded("Blizzard_EncounterJournal") and LoadAddOn then
-    pcall(LoadAddOn, "Blizzard_EncounterJournal")
+  -- Ensure the Encounter Journal addon is loaded on clients that require it.
+  if not IsAddOnLoaded("Blizzard_EncounterJournal") then
+    if C_AddOns and C_AddOns.LoadAddOn then
+      pcall(C_AddOns.LoadAddOn, "Blizzard_EncounterJournal")
+    elseif LoadAddOn then
+      pcall(LoadAddOn, "Blizzard_EncounterJournal")
+    end
   end
 
-  -- Enumerate all raid instances (isRaid=true)
+  -- Enumerate all raid instances (isRaid = true).
   local i = 1
   while true do
-    local name, _, id = EJ_GetInstanceByIndex(i, true)  -- true => raid instances
+    local name, _, id = EJ_GetInstanceByIndex(i, true)
     if not name then break end
     table.insert(result, { name = name, id = id })
     i = i + 1
   end
 
-  -- Fallback if nothing was returned (edge cases)
+  -- If we didn’t find anything (some clients/eras), revert to fallback.
   if #result == 0 then
     for _,name in ipairs(FALLBACK_RAIDS) do
       table.insert(result, { name = name, id = 0 })
@@ -51,14 +51,14 @@ local function GetAvailableRaids()
   return result
 end
 
--- CHANGED previously: no size, no role caps — unlimited signups
+-- Unlimited signups; no size/caps
 local function createEvent(title, ts, instance)
   local id = U:NewId('evt')
   local e = {
     id       = id,
     title    = title or 'Raid',
     ts       = ts or time(),
-    instance = instance or 'Karazhan',
+    instance = instance or 'Other',
     roles    = {},     -- informational only; no caps
     signups  = {},
     comp     = {},
@@ -99,29 +99,25 @@ function R:BuildUI(parent)
   timeEdit:SetAutoFocus(false)
   timeEdit:SetText('20:00')
 
-  -- Instance dropdown (NOW DYNAMIC)
+  -- Instance dropdown (DYNAMIC with “Other” fallback)
   local instanceDrop = CreateFrame('Frame', 'GTR_InstanceDrop', p, 'UIDropDownMenuTemplate')
   instanceDrop:SetPoint('LEFT', timeEdit, 'RIGHT', 10, 0)
   UIDropDownMenu_SetWidth(instanceDrop, 220)
 
-  -- Build the dynamic instance list once per UI build
   local raidList = GetAvailableRaids()
-  local defaultInstance = (raidList[1] and raidList[1].name) or 'Karazhan'
+  local defaultInstance = (raidList[1] and raidList[1].name) or "Other"
   UIDropDownMenu_SetText(instanceDrop, defaultInstance)
 
   UIDropDownMenu_Initialize(instanceDrop, function(self, level)
     for _,entry in ipairs(raidList) do
       local info = UIDropDownMenu_CreateInfo()
       info.text  = entry.name
-      info.func  = function()
-        UIDropDownMenu_SetText(instanceDrop, entry.name)
-      end
+      info.func  = function() UIDropDownMenu_SetText(instanceDrop, entry.name) end
       UIDropDownMenu_AddButton(info)
     end
   end)
 
-  -- (Removed size and role-cap inputs earlier)
-
+  -- Create button
   local createBtn = CreateFrame('Button', nil, p, 'UIPanelButtonTemplate')
   createBtn:SetSize(120,24)
   createBtn:SetPoint('LEFT', instanceDrop, 'RIGHT', 10, 0)
@@ -172,7 +168,7 @@ local function getSortedEvents()
   return arr
 end
 
--- === Raid Composition Editor ===
+-- === Raid Composition Editor (unchanged aside from no size caps) ===
 R.Comp = R.Comp or {}
 local Comp = R.Comp
 
@@ -240,7 +236,7 @@ end
 
 local function classColor(class)
   local c = RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
-  if c then return c.r, c.g, c.b end
+  if c then return c.r,c.g,c.b end
   return 1,1,1
 end
 
@@ -268,7 +264,7 @@ function Comp:Refresh()
     UIDropDownMenu_SetWidth(dd,100)
     UIDropDownMenu_SetText(dd, e.comp[name] and ('Group '..e.comp[name]) or 'Unassigned')
 
-    -- With size removed, default to 5 groups for composition
+    -- Without a raid size, default to 5 groups for comp.
     UIDropDownMenu_Initialize(dd, function(self, level)
       local function add(label, val)
         local info = UIDropDownMenu_CreateInfo()
@@ -310,7 +306,7 @@ function Comp:RefreshRight()
         if s and s.class then r,gg,b = classColor(s.class) end
         local line = right:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
         line:SetPoint('TOPLEFT', 16, y)
-        line:SetText(string.format('|cff%02x%02x%02x%s|r', r*255,gg*255,b*255,name))
+        line:SetText(string.format('|cff%02x%02x%02x%s|r', r*255,gg*255,b*255, name))
         y = y - 14
       end
     end
@@ -366,7 +362,7 @@ function R:Refresh()
       local line = df:CreateFontString(nil,'OVERLAY','GameFontDisableSmall')
       line:SetPoint('TOPLEFT',x,-14)
       local names = {}
-      for name,s in pairs(e.signups) do if s.role==key then table.insert(names,name) end end
+      for name,s in pairs(e.signups) do if s.role==key then table.insert(names, name) end end
       table.sort(names)
       line:SetText(table.concat(names, ', '))
     end
@@ -396,7 +392,7 @@ function R:Refresh()
       build:SetSize(140,22)
       build:SetPoint('BOTTOMRIGHT', -10, 10)
       build:SetText('Build Raid Comp')
-      build:SetScript('OnClick', function() Comp:Open(e) end)
+      build:SetScript('OnClick', function() R.Comp:Open(e) end)
 
       local edit=CreateFrame('Button', nil, box, 'UIPanelButtonTemplate')
       edit:SetSize(80,22)
