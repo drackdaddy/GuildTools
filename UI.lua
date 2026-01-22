@@ -1,12 +1,10 @@
+
 local GT = GuildTools
 local U = GT.Utils
-
 GT.UI = {}
 local UI = GT.UI
-
-UI.TABS = { 'Calendar', 'Raids', 'Bank', 'Admin', 'Logs', 'Sync' }
-UI.TAB_INDEX = { Calendar = 1, Raids = 2, Bank = 3, Admin = 4, Logs = 5, Sync = 6 }
-
+UI.TABS = { 'Calendar', 'Raids', 'Bank', 'Admin', 'Logs' }
+UI.TAB_INDEX = { Calendar = 1, Raids = 2, Bank = 3, Admin = 4, Logs = 5 }
 function UI:Build()
   if UI.frame then return end
   local f = CreateFrame('Frame','GuildToolsFrame',UIParent,'BasicFrameTemplateWithInset')
@@ -22,15 +20,8 @@ function UI:Build()
   if GT.Bank and GT.Bank.BuildUI then GT.Bank:BuildUI(f.pages[UI.TAB_INDEX.Bank]) end
   if GT.Admin and GT.Admin.BuildUI then GT.Admin:BuildUI(f.pages[UI.TAB_INDEX.Admin]) end
   if GT.Logs and GT.Logs.BuildUI then GT.Logs:BuildUI(f.pages[UI.TAB_INDEX.Logs]) end
-  do
-    local p = f.pages[UI.TAB_INDEX.Sync]
-    local btn = CreateFrame('Button', nil, p, 'UIPanelButtonTemplate') btn:SetSize(140,24) btn:SetPoint('TOPLEFT', 20, -20) btn:SetText('Sync Now') btn:SetScript('OnClick', function() if GT.Comm and GT.Comm.RequestSync then GT.Comm:RequestSync('MANUAL') end end)
-    local txt = p:CreateFontString(nil,'OVERLAY','GameFontHighlight') txt:SetPoint('TOPLEFT', btn, 'BOTTOMLEFT', 0, -10) txt:SetJustifyH('LEFT') txt:SetText('Auto-sync runs on login. Use this if you\'re missing events or permissions.')
-    if GT.Logs and GT.Logs.BuildSyncWidget then GT.Logs:BuildSyncWidget(p) end
-  end
   UI:SelectTab(UI.TAB_INDEX.Calendar)
 end
-
 function UI:SelectTab(i) local f = UI.frame for j=1,#UI.TABS do if j==i then f.pages[j]:Show(); PanelTemplates_SelectTab(f.tabs[j]) else f.pages[j]:Hide(); PanelTemplates_DeselectTab(f.tabs[j]) end end end
 function UI:Toggle() if not UI.frame then return end if UI.frame:IsShown() then UI.frame:Hide() else UI.frame:Show() end end
 function UI:RefreshAll() UI:RefreshRaids(); UI:RefreshBank(); if GT.Calendar and GT.Calendar.Refresh then GT.Calendar:Refresh() end end
