@@ -449,3 +449,31 @@ function R:Refresh()
             R:Refresh()
           end
         }
+        local dlg = StaticPopup_Show('GTR_EDIT_TITLE')
+        if dlg and dlg.editBox then dlg.editBox:SetText(e.title or '') end
+      end)
+
+      local del = CreateFrame('Button', nil, box, 'UIPanelButtonTemplate')
+      del:SetSize(80,22)
+      del:SetPoint('BOTTOMRIGHT', -260, 10)
+      del:SetText('Delete')
+      del:SetScript('OnClick', function()
+        StaticPopupDialogs['GTR_DEL_EVT'] = {
+          text='Delete this event?', button1='Yes', button2='No', timeout=0, whileDead=true, hideOnEscape=true,
+          OnAccept=function()
+            GT.db.events[e.id] = nil
+            if GT.Comm then GT.Comm:Send('EVENT_DELETE', U:Serialize({id=e.id})) end
+            if Log then Log:Add('INFO','EVENT','Deleted event '..e.id) end
+            R:Refresh()
+          end
+        }
+        StaticPopup_Show('GTR_DEL_EVT')
+      end)
+    end
+
+    y = y - 150
+  end
+
+  content:SetHeight(-y + 20)
+end
+
