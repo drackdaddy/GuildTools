@@ -4,14 +4,15 @@ local Log = GT.Log
 GT.Logs = GT.Logs or {}
 local UI = GT.Logs
 
--- Registry of active sync widgets so we only subscribe ONCE globally.
-UI._syncWidgets = UI._syncWidgets or {}
+-- Registry so we subscribe once and refresh any visible Sync widget(s)
+UI._syncWidgets    = UI._syncWidgets    or {}
 UI._syncSubscribed = UI._syncSubscribed or false
 
 local function addRow(parent, y, text)
   local fs = parent:CreateFontString(nil, 'OVERLAY', 'GameFontHighlightSmall')
   fs:SetPoint('TOPLEFT', 6, y)
   fs:SetJustifyH('LEFT')
+  fs:SetWordWrap(false)            -- ensure single-line; prevents variable wrapping/overlap
   fs:SetText(text)
   return fs
 end
@@ -39,7 +40,6 @@ function UI:BuildUI(parent)
   list:SetPoint('TOPLEFT', 20, -60)
   list:SetPoint('BOTTOMRIGHT', -20, 20)
 
-  -- Use an anonymous scroll name to avoid global conflicts.
   local scroll = CreateFrame('ScrollFrame', nil, list, 'UIPanelScrollFrameTemplate')
   scroll:SetPoint('TOPLEFT', 10, -10)
   scroll:SetPoint('BOTTOMRIGHT', -30, 10)
@@ -52,7 +52,6 @@ function UI:BuildUI(parent)
   UI.parent = p
   UI:Refresh()
 
-  -- Subscribe only once globally for the Logs tab live updates
   if not UI._logSubscribed then
     Log:Register(function()
       if UI.parent then UI:Refresh(true) end
@@ -85,73 +84,70 @@ function UI:Refresh(appendOnly)
 end
 
 -- ===================================
--- Sync widget (top-down, no duplicate)
+-- Sync widget (top-down, no overlap)
 -- ===================================
 
--- Internal: refresh a specific widget's content
+-- Internal: render a Sync widget by replacing the content frame each time.
 local function RefreshSyncWidget(widget)
-  local c = widget.syncContent
-  if not c then return end
+  if not widget or not widget.syncScroll then return end
 
-  -- Clear previous lines to prevent any visual overlap
-  for _,child in ipairs({c:GetChildren()}) do child:Hide(); child:SetParent(nil) end
+  -- DESTROY the previous content and create a fresh one
+  local oldContent = widget.syncContent
+  if oldContent then
+    for _,child in ipairs({oldContent:GetChildren()}) do child:Hide(); child:SetParent(nil) end
+    oldContent:Hide()
+    oldContent:SetParent(nil)
+  end
 
+  local content = CreateFrame('Frame', nil, widget.syncScroll)
+  content:SetSize(1,1)
+  widget.syncScroll:SetScrollChild(content)
+  widget.syncContent = content
+
+  -- Gather logs and place NEWEST at TOP (top-down)
   local logs = Log:GetAll({cat='SYNC'})
   local lastN = 100
   local startIdx = math.max(1, #logs - lastN + 1)
 
   local y = -2
-  -- NEWEST at TOP: iterate from newest to oldest
   for i = #logs, startIdx, -1 do
     local e = logs[i]
     local line = string.format('|cffaaaaaa%s|r |cff00ff00[%s]|r %s',
       date('%H:%M:%S', e.ts), e.level, e.msg)
-    local fs = c:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
-    fs:SetPoint('TOPLEFT', 6, y)
-    fs:SetJustifyH('LEFT')
-    fs:SetText(line)
+    addRow(content, y, line)
     y = y - 14
   end
 
-  c:SetHeight(-y + 10)
+  content:SetHeight(-y + 10)
 
-  -- Ensure the scroll shows the TOP (where newest now appears)
-  if widget.syncScroll then widget.syncScroll:SetVerticalScroll(0) end
+  -- Show TOP (newest) right away
+  widget.syncScroll:SetVerticalScroll(0)
 end
 
 function UI:BuildSyncWidget(parent)
-  -- Place the inset lower so it doesn’t overlap the Sync button/tip above
+  -- Lowered to avoid overlapping the "Sync Now" button and its helper text
   local box = CreateFrame('Frame', nil, parent, 'InsetFrameTemplate3')
-  box:SetPoint('TOPLEFT', 20, -90)   -- lowered a bit more than before
+  box:SetPoint('TOPLEFT', 20, -90)
   box:SetPoint('BOTTOMRIGHT', -20, 20)
 
   local scroll = CreateFrame('ScrollFrame', nil, box, 'UIPanelScrollFrameTemplate')
   scroll:SetPoint('TOPLEFT', 10, -10)
   scroll:SetPoint('BOTTOMRIGHT', -30, 10)
 
-  local content = CreateFrame('Frame', nil, scroll)
-  content:SetSize(1,1)
-  scroll:SetScrollChild(content)
+  parent.syncScroll = scroll
+  parent.syncContent = nil -- will be created in RefreshSyncWidget
 
-  parent.syncContent = content
-  parent.syncScroll  = scroll
-
-  -- Track this widget in the registry
+  -- Track this widget; remove when hidden to avoid stale references
   UI._syncWidgets[parent] = true
+  parent:HookScript('OnHide', function() UI._syncWidgets[parent] = nil end)
 
-  -- Ensure we remove it if the page hides (prevents stale entries)
-  parent:HookScript('OnHide', function()
-    UI._syncWidgets[parent] = nil
-  end)
-
-  -- Draw once now
   RefreshSyncWidget(parent)
 
-  -- Single GLOBAL subscription to SYNC events; refresh all active widgets
+  -- Single global subscription; refresh all visible widgets on SYNC entry
   if not UI._syncSubscribed then
     Log:Register(function(e)
       if e and e.cat ~= 'SYNC' then return end
-      for frame,_ in pairs(UI._syncWidgets) do
+      for frame in pairs(UI._syncWidgets) do
         if frame and frame:IsShown() then
           RefreshSyncWidget(frame)
         end
