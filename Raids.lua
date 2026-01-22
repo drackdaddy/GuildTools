@@ -492,3 +492,4 @@ function R:Refresh()
     y = y - 150
   end
   content:SetHeight(-y + 20)
+end
