@@ -1,4 +1,3 @@
-
 local GT  = GuildTools
 local U   = GT.Utils
 local Log = GT.Log
