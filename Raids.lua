@@ -78,59 +78,15 @@ function R:BuildUI(parent)
   createBtn:SetPoint('TOPLEFT', 20, y - 26)
   createBtn:SetText('Create')
 
-  -- Row: Version + Raid + Date (flyout)
+  -- === Single row of selectors (aligned): Date/Time → Version → Raid ===
   y = y - 60
 
-  -- Narrower dropdowns
-  local versionDrop = CreateFrame('Frame', 'GTR_VersionDrop', p, 'UIDropDownMenuTemplate')
-  versionDrop:SetPoint('TOPLEFT', 20, y)
-  UIDropDownMenu_SetWidth(versionDrop, 120)
-
-  local instanceDrop = CreateFrame('Frame', 'GTR_InstanceDrop', p, 'UIDropDownMenuTemplate')
-  instanceDrop:SetPoint('LEFT', versionDrop, 'RIGHT', -10, 0)
-  UIDropDownMenu_SetWidth(instanceDrop, 180)
-
-  local selectedVersion = "Classic"
-  local selectedRaid = nil
-
-  local function PopulateInstanceDrop(versionName)
-    local list = RAID_CATALOG[versionName] or {}
-    selectedRaid = list[1] or "Other"
-    UIDropDownMenu_SetText(instanceDrop, selectedRaid)
-    UIDropDownMenu_Initialize(instanceDrop, function(self, level)
-      for _, raidName in ipairs(list) do
-        local info = UIDropDownMenu_CreateInfo()
-        info.text  = raidName
-        info.func  = function()
-          selectedRaid = raidName
-          UIDropDownMenu_SetText(instanceDrop, raidName)
-        end
-        UIDropDownMenu_AddButton(info)
-      end
-    end)
-  end
-
-  UIDropDownMenu_Initialize(versionDrop, function(self, level)
-    for _, ver in ipairs({ "Classic", "Burning Crusade" }) do
-      local info = UIDropDownMenu_CreateInfo()
-      info.text  = ver
-      info.func  = function()
-        selectedVersion = ver
-        UIDropDownMenu_SetText(versionDrop, ver)
-        PopulateInstanceDrop(selectedVersion)
-      end
-      UIDropDownMenu_AddButton(info)
-    end
-  end)
-  UIDropDownMenu_SetText(versionDrop, selectedVersion)
-  PopulateInstanceDrop(selectedVersion)
-
   ----------------------------------------------------------------------
-  -- Date & Time flyout (12-hour time, single-day highlight)
+  -- Date & Time flyout (12-hour time, single-day highlight)  [FIRST]
   ----------------------------------------------------------------------
   local dateBtn = CreateFrame('Button', nil, p, 'UIPanelButtonTemplate')
   dateBtn:SetSize(180,24)
-  dateBtn:SetPoint('LEFT', instanceDrop, 'RIGHT', 10, 0)
+  dateBtn:SetPoint('TOPLEFT', 20, y)  -- FIRST on the row
 
   -- Default selection: tomorrow 8:00 PM
   local now = time()
@@ -148,6 +104,7 @@ function R:BuildUI(parent)
     local h12 = h24 % 12; if h12 == 0 then h12 = 12 end
     return h12, ap
   end
+
   local function to24h(h12, ap)
     if ap == "PM" then
       if h12 < 12 then return h12 + 12 end
@@ -157,9 +114,9 @@ function R:BuildUI(parent)
       return h12
     end
   end
+
   local function fmtBtn()
     local h12, ap = to12h(sel.hour)
-    -- Button label as MM/DD/YYYY  hh:mm AM/PM
     return string.format('%02d/%02d/%04d  %02d:%02d %s', sel.month, sel.day, sel.year, h12, sel.min, ap)
   end
   dateBtn:SetText(fmtBtn())
@@ -211,7 +168,6 @@ function R:BuildUI(parent)
     btn.text:SetPoint('CENTER')
     btn.day = nil
     btn.index = idx
-    -- Selection overlay (green translucent)
     local selTex = btn:CreateTexture(nil, 'ARTWORK')
     selTex:SetAllPoints(btn)
     selTex:SetColorTexture(0, 1, 0, 0.25)
@@ -222,7 +178,7 @@ function R:BuildUI(parent)
   end
   for i=1,42 do makeCell(i) end
 
-  -- Single selection
+  -- Single selection overlay control
   fly.selectedIndex = nil
   local function setSelectedByIndex(idx)
     if fly.selectedIndex and fly.cells[fly.selectedIndex] then
@@ -280,7 +236,7 @@ function R:BuildUI(parent)
     refreshCalendar()
   end)
 
-  -- 12‑hour time row
+  -- 12‑hour time row (HH:MM + AM/PM)
   local timeRow = CreateFrame('Frame', nil, fly)
   timeRow:SetPoint('TOPLEFT', 0, -260)
   timeRow:SetSize(520, 24)
@@ -349,8 +305,7 @@ function R:BuildUI(parent)
       ampmValue = ap
       initAmpm()
       UIDropDownMenu_SetText(ampmDrop, ampmValue)
-      fly:Show()
-      fly:Raise()
+      fly:Show(); fly:Raise()
     end
   end)
   cancelBtn:SetScript('OnClick', function() fly:Hide() end)
@@ -374,6 +329,61 @@ function R:BuildUI(parent)
   UIDropDownMenu_SetText(ampmDrop, ampmValue)
 
   ----------------------------------------------------------------------
+  -- Game Version [SECOND] (anchored directly after Date/Time)
+  ----------------------------------------------------------------------
+  local versionDrop = CreateFrame('Frame', nil, p, 'UIDropDownMenuTemplate')
+  versionDrop:SetPoint('LEFT', dateBtn, 'RIGHT', 10, 0)
+  UIDropDownMenu_SetWidth(versionDrop, 120)
+  local selectedVersion = "Classic"
+
+  ----------------------------------------------------------------------
+  -- Raid [THIRD] (anchored after Version)
+  ----------------------------------------------------------------------
+  local instanceDrop = CreateFrame('Frame', nil, p, 'UIDropDownMenuTemplate')
+  instanceDrop:SetPoint('LEFT', versionDrop, 'RIGHT', -10, 0)
+  UIDropDownMenu_SetWidth(instanceDrop, 180)
+  local selectedRaid = nil
+
+  -- >>> Forward declaration so Version callback can call it safely
+  local function PopulateInstanceDrop(versionName) end
+
+  -- Version dropdown (populate and wire callback)
+  UIDropDownMenu_Initialize(versionDrop, function(self, level)
+    for _, ver in ipairs({ "Classic", "Burning Crusade" }) do
+      local info = UIDropDownMenu_CreateInfo()
+      info.text  = ver
+      info.func  = function()
+        selectedVersion = ver
+        UIDropDownMenu_SetText(versionDrop, ver)
+        PopulateInstanceDrop(selectedVersion)  -- safe, already declared
+      end
+      UIDropDownMenu_AddButton(info)
+    end
+  end)
+  UIDropDownMenu_SetText(versionDrop, selectedVersion)
+
+  -- Define after instanceDrop exists (uses instanceDrop inside)
+  PopulateInstanceDrop = function(versionName)
+    local list = RAID_CATALOG[versionName] or {}
+    selectedRaid = list[1] or "Other"
+    UIDropDownMenu_SetText(instanceDrop, selectedRaid)
+    UIDropDownMenu_Initialize(instanceDrop, function(self, level)
+      for _, raidName in ipairs(list) do
+        local info = UIDropDownMenu_CreateInfo()
+        info.text  = raidName
+        info.func  = function()
+          selectedRaid = raidName
+          UIDropDownMenu_SetText(instanceDrop, raidName)
+        end
+        UIDropDownMenu_AddButton(info)
+      end
+    end)
+  end
+
+  -- Initial population based on default selectedVersion
+  PopulateInstanceDrop(selectedVersion)
+
+  ----------------------------------------------------------------------
   -- Create button (title uses selected Raid; time saved in 24h)
   ----------------------------------------------------------------------
   createBtn:SetScript('OnClick', function()
@@ -393,7 +403,7 @@ function R:BuildUI(parent)
       min   = sel.min or 0,
       sec   = 0,
     })
-    local instName = selectedRaid or "Other"
+    local instName = selectedRaid or UIDropDownMenu_GetText(instanceDrop) or "Other"
     local title = instName
     createEvent(title, ts, instName)
     R:Refresh()
@@ -575,7 +585,7 @@ function R:Refresh()
 
     local title = box:CreateFontString(nil,'OVERLAY','GameFontNormal')
     title:SetPoint('TOPLEFT',10,-8)
-    -- FIX: show raid name ONLY ONCE, and time as 12-hour with AM/PM
+    -- Show raid name ONCE + 12-hour time
     title:SetText(string.format('%s  |  %s', e.title, date('%b %d %I:%M %p', e.ts)))
 
     local counts = {tanks=0,heals=0,dps=0}
