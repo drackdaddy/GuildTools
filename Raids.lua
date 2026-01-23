@@ -51,18 +51,15 @@ function R:BuildUI(parent)
  local p = CreateFrame('Frame', nil, parent) 
  p:SetAllPoints(true) 
  parent.container = p 
- 
- -- Creation UI removed by request; creation now happens via Calendar -> R:OpenCreateDialog().
+ -- Creation UI removed by request; creation now happens via Calendar -> R:OpenCreateDialog(). 
  local y = -20 
  -- header removed per request 
-  
-  
+ 
  
  local list = CreateFrame('Frame', nil, p, 'InsetFrameTemplate3') 
  -- Moved up because the creator row was removed 
  list:SetPoint('TOPLEFT', 20, -20) 
  list:SetPoint('BOTTOMRIGHT', -20, 20) 
- 
  local scroll = CreateFrame('ScrollFrame', 'GTR_Scroll', list, 'UIPanelScrollFrameTemplate') 
  scroll:SetPoint('TOPLEFT', 10, -10) 
  scroll:SetPoint('BOTTOMRIGHT', -30, 10) 
@@ -154,318 +151,397 @@ function Comp:RefreshRight()
  y = y - 6 
  end 
 end 
-function R:Refresh() 
- if not R.parent then return end 
- local content = R.parent.content 
- for _,c in ipairs({content:GetChildren()}) do c:Hide(); c:SetParent(nil) end 
- local y = -5 
- for _,e in ipairs(getSortedEvents()) do 
- local box = CreateFrame('Frame', nil, content, 'InsetFrameTemplate3') 
- box:SetSize(800,140); box:SetPoint('TOPLEFT',5,y) 
- local title = box:CreateFontString(nil,'OVERLAY','GameFontNormal') 
- title:SetPoint('TOPLEFT',10,-8) 
- title:SetText(string.format('%s \n %s', e.title, date('%b %d %I:%M %p', e.ts))) 
- local counts = {tanks=0,heals=0,dps=0} 
- for _,s in pairs(e.signups) do counts[s.role] = (counts[s.role] or 0) + 1 end 
- local status = box:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall') 
- status:SetPoint('TOPRIGHT',-10,-10) 
- status:SetText(string.format('T:%d H:%d D:%d', counts.tanks or 0, counts.heals or 0, counts.dps or 0)) 
- local detailsBtn = CreateFrame('Button', nil, box, 'UIPanelButtonTemplate') 
- detailsBtn:SetSize(110,22); detailsBtn:SetPoint('BOTTOMLEFT', 10, 10); detailsBtn:SetText('View Sign Ups') 
- box.detailsShown=false 
- detailsBtn:SetScript('OnClick', function() 
- box.detailsShown = not box.detailsShown 
- if box.detailsShown then detailsBtn:SetText('Hide') else detailsBtn:SetText('View Sign Ups') end 
- if box.detailFrame then box.detailFrame:SetShown(box.detailsShown) end 
- end) 
- local df = CreateFrame('Frame', nil, box) 
- df:SetPoint('TOPLEFT',10,-50); df:SetPoint('TOPRIGHT', -10, -50); df:SetHeight(44); df:Hide(); box.detailFrame = df 
- local function addRole(label,key,x) 
- local hdr = df:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall'); hdr:SetPoint('TOPLEFT',x,0); hdr:SetText(label..':') 
- local line = df:CreateFontString(nil,'OVERLAY','GameFontDisableSmall'); line:SetPoint('TOPLEFT',x,-14) 
- local names = {}; for name,s in pairs(e.signups) do if s.role==key then table.insert(names, name) end end 
- table.sort(names); line:SetText(table.concat(names, ', ')) 
- end 
- addRole('Tanks','tanks',0); addRole('Heals','heals',220); addRole('DPS','dps',440) 
- -- Map display labels to internal role keys
-local roleButtons = {
-  { label='Tank',   key='tanks' },
-  { label='Healer', key='heals' },
-  { label='DPS',    key='dps'   },
-}
+-- >>> REPLACED R:Refresh STARTS HERE <<<
+function R:Refresh()
+  if not R.parent then return end
+  local content = R.parent.content
+  for _,c in ipairs({content:GetChildren()}) do c:Hide(); c:SetParent(nil) end
 
--- Place buttons on the same horizontal line as title/date (top-right of the box)
-local prevBtn = nil
-for i,rb in ipairs(roleButtons) do
-  local b = CreateFrame('Button', nil, box, 'UIPanelButtonTemplate')
-  b:SetSize(80,22)
-  if i == 1 then
-    b:SetPoint('TOPRIGHT', box, 'TOPRIGHT', -10, -6)
-  else
-    b:SetPoint('RIGHT', prevBtn, 'LEFT', -6, 0)
+  local y = -5
+  for _,e in ipairs(getSortedEvents()) do
+    -- Thinner event box to close the gap
+    local box = CreateFrame('Frame', nil, content, 'InsetFrameTemplate3')
+    box:SetSize(800, 100)                               -- was 140
+    box:SetPoint('TOPLEFT', 5, y)
+
+    -- Title (raid name + date/time)
+    local title = box:CreateFontString(nil,'OVERLAY','GameFontNormal')
+    title:SetPoint('TOPLEFT', 10, -8)
+    title:SetText(string.format('%s \n %s', e.title, date('%b %d %I:%M %p', e.ts)))
+
+    -- Running totals (T/H/D) directly under the title
+    local counts = { tanks=0, heals=0, dps=0 }
+    for _,s in pairs(e.signups or {}) do counts[s.role] = (counts[s.role] or 0) + 1 end
+
+    local totals = box:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
+    totals:SetPoint('TOPLEFT', title, 'BOTTOMLEFT', 0, -4)
+    totals:SetText(string.format('T:%d  H:%d  D:%d', counts.tanks or 0, counts.heals or 0, counts.dps or 0))
+
+    ----------------------------------------------------------------
+    -- Top-right role sign-up buttons (unchanged behavior, same placement)
+    ----------------------------------------------------------------
+    local roleButtons = {
+      { label='Tank',   key='tanks' },
+      { label='Healer', key='heals' },
+      { label='DPS',    key='dps'   },
+    }
+    local prevBtn = nil
+    for i,rb in ipairs(roleButtons) do
+      local b = CreateFrame('Button', nil, box, 'UIPanelButtonTemplate')
+      b:SetSize(80,22)
+      if i == 1 then b:SetPoint('TOPRIGHT', box, 'TOPRIGHT', -10, -6)
+      else b:SetPoint('RIGHT', prevBtn, 'LEFT', -6, 0) end
+      b:SetText(rb.label)
+      b:SetScript('OnClick', function()
+        local name = UnitName('player'); local _,class = UnitClass('player')
+        e.signups[name] = { player=name, class=class, role=rb.key }
+        GT.gdb.dataVersion = (GT.gdb.dataVersion or 1) + 1
+        if GT.Comm then GT.Comm:Send('EVENT_UPDATE', U:Serialize(e)) end
+        if Log then Log:Add('INFO','EVENT','Signup '..name..' as '..rb.key) end
+        R:Refresh()
+      end)
+      prevBtn = b
+    end
+
+    ----------------------------------------------------------------
+    -- "View Sign Ups" -> flyout grouped by CLASS, with "Class / Name"
+    ----------------------------------------------------------------
+    local function classColorRGB(token)
+      local c = RAID_CLASS_COLORS and RAID_CLASS_COLORS[token]
+      if c then return math.floor(c.r*255), math.floor(c.g*255), math.floor(c.b*255) end
+      return 255,255,255
+    end
+
+    local function buildFlyout(fly)
+      -- rebuild every time to reflect freshest signups
+      for _,child in ipairs({fly.content:GetChildren()}) do child:Hide(); child:SetParent(nil) end
+
+      -- group by class token
+      local classGroups = {}
+      for name, s in pairs(e.signups or {}) do
+        local token = s.class or 'UNKNOWN'
+        classGroups[token] = classGroups[token] or {}
+        table.insert(classGroups[token], { name=name, role=s.role or 'dps' })
+      end
+
+      -- order: Blizzard's global if present; else a reasonable default
+      local order = CLASS_SORT_ORDER or {
+        'WARRIOR','PALADIN','HUNTER','ROGUE','PRIEST','DEATHKNIGHT',
+        'SHAMAN','MAGE','WARLOCK','MONK','DRUID','DEMONHUNTER','EVOKER'
+      }
+
+      local y2 = -8
+      for _,token in ipairs(order) do
+        local entries = classGroups[token]
+        if entries and #entries > 0 then
+          table.sort(entries, function(a,b) return a.name < b.name end)
+          local locName = (LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[token]) or token
+          local r,g,b = classColorRGB(token)
+
+          local hdr = fly.content:CreateFontString(nil,'OVERLAY','GameFontNormal')
+          hdr:SetPoint('TOPLEFT', 8, y2)
+          hdr:SetText(string.format('|cff%02x%02x%02x%s|r', r,g,b, locName))
+          y2 = y2 - 18
+
+          for _,entry in ipairs(entries) do
+            local roleShort = (entry.role == 'tanks' and 'T') or (entry.role == 'heals' and 'H') or 'D'
+            local line = fly.content:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
+            line:SetPoint('TOPLEFT', 16, y2)
+            -- Class / Name (with class color on the class)
+            line:SetText(string.format('|cff%02x%02x%02x%s|r / %s (%s)', r,g,b, locName, entry.name, roleShort))
+            y2 = y2 - 14
+          end
+          y2 = y2 - 6
+        end
+      end
+
+      -- no signups case
+      if (not next(classGroups)) then
+        local none = fly.content:CreateFontString(nil,'OVERLAY','GameFontDisable')
+        none:SetPoint('TOPLEFT', 8, y2)
+        none:SetText('No sign ups yet.')
+        y2 = y2 - 16
+      end
+
+      fly.content:SetHeight(-y2 + 12)
+    end
+
+    -- Create flyout (once per box)
+    local fly = CreateFrame('Frame', nil, UIParent, 'BasicFrameTemplateWithInset')
+    fly:SetSize(320, 360)
+    fly:SetPoint('TOPLEFT', box, 'TOPRIGHT', 8, 0) -- classic flyout feel
+    fly:SetFrameStrata('DIALOG')
+    fly:SetToplevel(true)
+    fly:SetClampedToScreen(true)
+    fly:Hide()
+    box.flyout = fly
+
+    fly.title = fly:CreateFontString(nil,'OVERLAY','GameFontHighlight')
+    fly.title:SetPoint('LEFT', fly.TitleBg, 'LEFT', 6, 0)
+    fly.title:SetText('Sign Ups by Class')
+
+    local scroll = CreateFrame('ScrollFrame', nil, fly, 'UIPanelScrollFrameTemplate')
+    scroll:SetPoint('TOPLEFT', 10, -40)
+    scroll:SetPoint('BOTTOMRIGHT', -28, 10)
+    local flyContent = CreateFrame('Frame', nil, scroll)
+    flyContent:SetSize(1,1)
+    scroll:SetScrollChild(flyContent)
+    fly.content = flyContent
+
+    -- close flyout if the event row is rebuilt or hidden
+    box:SetScript('OnHide', function() fly:Hide() end)
+
+    local detailsBtn = CreateFrame('Button', nil, box, 'UIPanelButtonTemplate')
+    detailsBtn:SetSize(110,22)
+    detailsBtn:SetPoint('BOTTOMLEFT', 10, 10)
+    detailsBtn:SetText('View Sign Ups')
+    box.flyoutShown = false
+
+    detailsBtn:SetScript('OnClick', function()
+      box.flyoutShown = not box.flyoutShown
+      if box.flyoutShown then
+        buildFlyout(fly)
+        fly:Show(); fly:Raise()
+        detailsBtn:SetText('Hide')
+      else
+        fly:Hide()
+        detailsBtn:SetText('View Sign Ups')
+      end
+    end)
+
+    ----------------------------------------------------------------
+    -- Bottom-right admin buttons (kept, gap reduced by smaller box)
+    ----------------------------------------------------------------
+    if U:HasPermission(GT.gdb.permissions.raidsMinRank) then
+      local build = CreateFrame('Button', nil, box, 'UIPanelButtonTemplate')
+      build:SetSize(140,22)
+      build:SetPoint('BOTTOMRIGHT', -10, 10)
+      build:SetText('Build Raid Comp')
+      build:SetScript('OnClick', function() R.Comp:Open(e) end)
+
+      local edit = CreateFrame('Button', nil, box, 'UIPanelButtonTemplate')
+      edit:SetSize(80,22)
+      edit:SetPoint('RIGHT', build, 'LEFT', -6, 0)
+      edit:SetText('Edit')
+      edit:SetScript('OnClick', function()
+        StaticPopupDialogs['GTR_EDIT_TITLE'] = { text='Set new title:', button1='Save', button2='Cancel', hasEditBox=true, timeout=0, whileDead=true, hideOnEscape=true,
+          OnAccept=function(dlg)
+            e.title = dlg.editBox:GetText() or e.title
+            if GT.Comm then GT.Comm:Send('EVENT_UPDATE', U:Serialize(e)) end
+            if Log then Log:Add('INFO','EVENT','Renamed event '..e.id..' to '..e.title) end
+            R:Refresh()
+          end }
+        local dlg = StaticPopup_Show('GTR_EDIT_TITLE'); if dlg and dlg.editBox then dlg.editBox:SetText(e.title or '') end
+      end)
+
+      local del = CreateFrame('Button', nil, box, 'UIPanelButtonTemplate')
+      del:SetSize(80,22)
+      del:SetPoint('RIGHT', edit, 'LEFT', -6, 0)
+      del:SetText('Delete')
+      del:SetScript('OnClick', function()
+        StaticPopupDialogs['GTR_DEL_EVT'] = { text='Delete this event?', button1='Yes', button2='No', timeout=0, whileDead=true, hideOnEscape=true,
+          OnAccept=function()
+            GT.gdb.events[e.id] = nil
+            if GT.Comm then GT.Comm:Send('EVENT_DELETE', U:Serialize({id=e.id})) end
+            if Log then Log:Add('INFO','EVENT','Deleted event '..e.id) end
+            R:Refresh()
+          end }
+        StaticPopup_Show('GTR_DEL_EVT')
+      end)
+    end
+
+    -- Move to next row; smaller step because the box is thinner
+    y = y - 110                                  -- was 150
   end
-  b:SetText(rb.label)
-  b:SetScript('OnClick', function()
-    local name = UnitName('player'); local _,class = UnitClass('player')
-    e.signups[name] = { player=name, class=class, role=rb.key }
-    GT.gdb.dataVersion = (GT.gdb.dataVersion or 1) + 1
-    if GT.Comm then GT.Comm:Send('EVENT_UPDATE', U:Serialize(e)) end
-    if Log then Log:Add('INFO','EVENT','Signup '..name..' as '..rb.key) end
-    R:Refresh()
-  end)
-  prevBtn = b
-end
 
-if U:HasPermission(GT.gdb.permissions.raidsMinRank) then 
- local build=CreateFrame('Button', nil, box, 'UIPanelButtonTemplate') 
- build:SetSize(140,22); build:SetPoint('BOTTOMRIGHT', -10, 10); build:SetText('Build Raid Comp') 
- build:SetScript('OnClick', function() R.Comp:Open(e) end) 
- local edit=CreateFrame('Button', nil, box, 'UIPanelButtonTemplate') 
- edit:SetSize(80,22); edit:SetPoint('BOTTOMRIGHT', -160, 10); edit:SetText('Edit') 
- edit:SetScript('OnClick', function() 
- StaticPopupDialogs['GTR_EDIT_TITLE']={ text='Set new title:', button1='Save', button2='Cancel', hasEditBox=true, timeout=0, whileDead=true, hideOnEscape=true, 
- OnAccept=function(d) 
- e.title = d.editBox:GetText() or e.title 
- if GT.Comm then GT.Comm:Send('EVENT_UPDATE', U:Serialize(e)) end 
- if Log then Log:Add('INFO','EVENT','Renamed event '..e.id..' to '..e.title) end 
- R:Refresh() 
- end } 
- local dlg=StaticPopup_Show('GTR_EDIT_TITLE'); if dlg and dlg.editBox then dlg.editBox:SetText(e.title or '') end 
- end) 
- local del=CreateFrame('Button', nil, box, 'UIPanelButtonTemplate') 
- del:SetSize(80,22); del:SetPoint('BOTTOMRIGHT', -260, 10); del:SetText('Delete') 
- del:SetScript('OnClick', function() 
- StaticPopupDialogs['GTR_DEL_EVT']={ text='Delete this event?', button1='Yes', button2='No', timeout=0, whileDead=true, hideOnEscape=true, 
- OnAccept=function() 
- GT.gdb.events[e.id] = nil 
- if GT.Comm then GT.Comm:Send('EVENT_DELETE', U:Serialize({id=e.id})) end 
- if Log then Log:Add('INFO','EVENT','Deleted event '..e.id) end 
- R:Refresh() 
- end } 
- StaticPopup_Show('GTR_DEL_EVT') 
- end) 
- end 
- y = y - 150 
- end 
- content:SetHeight(-y+20) 
-end 
+  content:SetHeight(-y + 20)
+end
+-- >>> REPLACED R:Refresh ENDS HERE <<<
 
 -- Reusable Create Raid modal dialog (opened from Calendar)
 -- Inline calendar/time; Version and Raid at the top. Now narrower.
 function R:OpenCreateDialog(preset)
-  if self.createFrame and self.createFrame:IsShown() then
-    self.createFrame:Raise()
-    return
-  end
-
-  local now = time()
-  local tomorrow = now + 24*3600
-  local sel = {
-    year  = (preset and preset.year)  or tonumber(date('%Y', tomorrow)),
-    month = (preset and preset.month) or tonumber(date('%m', tomorrow)),
-    day   = (preset and preset.day)   or tonumber(date('%d', tomorrow)),
-    hour  = (preset and preset.hour)  or 20,
-    min   = (preset and preset.min)   or 0,
-  }
-
-  local function to12h(h24) local ap=(h24<12) and 'AM' or 'PM'; local h12=h24%12; if h12==0 then h12=12 end; return h12, ap end
-  local function to24h(h12, ap) if ap=='PM' then if h12<12 then return h12+12 end; return 12 else if h12==12 then return 0 end; return h12 end end
-
-  local f = self.createFrame or CreateFrame('Frame', 'GuildToolsCreateRaidFrame', UIParent, 'BasicFrameTemplateWithInset')
-  -- Narrower frame width
-  f:SetSize(560, 440)
-  f:SetPoint('CENTER')
-  f:SetFrameStrata('DIALOG')
-  f:SetToplevel(true)
-  f:SetClampedToScreen(true)
-  f:EnableMouse(true)
-  f:SetMovable(true)
-  f:RegisterForDrag('LeftButton')
-  f:SetScript('OnDragStart', f.StartMoving)
-  f:SetScript('OnDragStop', f.StopMovingOrSizing)
-
-  f.TitleText:SetText('Create Raid Event')
-
-  if not f.built then
-    local topY = -40
-
-    -- Top row: Version & Raid (tightened widths)
-    local versionLbl = f:CreateFontString(nil,'OVERLAY','GameFontHighlight')
-    versionLbl:SetPoint('TOPLEFT', 12, topY)
-    versionLbl:SetText('Version:')
-
-    local versionDrop = CreateFrame('Frame', nil, f, 'UIDropDownMenuTemplate')
-    versionDrop:SetPoint('LEFT', versionLbl, 'RIGHT', -16, 0)
-    UIDropDownMenu_SetWidth(versionDrop, 140)
-    f.versionDrop = versionDrop
-
-    local raidLbl = f:CreateFontString(nil,'OVERLAY','GameFontHighlight')
-    raidLbl:SetPoint('LEFT', versionDrop, 'RIGHT', 8, 0)
-    raidLbl:SetText('Raid:')
-
-    local instanceDrop = CreateFrame('Frame', nil, f, 'UIDropDownMenuTemplate')
-    instanceDrop:SetPoint('LEFT', raidLbl, 'RIGHT', -16, 0)
-    UIDropDownMenu_SetWidth(instanceDrop, 200)
-    f.instanceDrop = instanceDrop
-
-    -- Inline calendar/time area (narrower grid)
-    local cal = CreateFrame('Frame', nil, f, 'InsetFrameTemplate3')
-    cal:SetPoint('TOPLEFT', 12, topY - 40)
-    cal:SetPoint('TOPRIGHT', -12, topY - 40)
-    cal:SetHeight(300)
-    f.calArea = cal
-
-    cal.monthText = cal:CreateFontString(nil,'OVERLAY','GameFontHighlightLarge')
-    cal.monthText:SetPoint('TOPLEFT', 10, -8)
-
-    local prevBtn = CreateFrame('Button', nil, cal, 'UIPanelButtonTemplate'); prevBtn:SetSize(22,22); prevBtn:SetPoint('TOPRIGHT', -60, -8); prevBtn:SetText('<')
-    local nextBtn = CreateFrame('Button', nil, cal, 'UIPanelButtonTemplate'); nextBtn:SetSize(22,22); nextBtn:SetPoint('LEFT', prevBtn, 'RIGHT', 6, 0); nextBtn:SetText('>')
-    cal.prevBtn, cal.nextBtn = prevBtn, nextBtn
-
-    local current = { year = sel.year, month = sel.month }
-    cal.current = current
-
-    local weekdayNames = { 'Sun','Mon','Tue','Wed','Thu','Fri','Sat' }
-    for i=1,7 do local lbl = cal:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall'); lbl:SetPoint('TOPLEFT', 10 + (i-1)*64, -34); lbl:SetText(weekdayNames[i]) end
-
-    cal.cells = {}
-    local function makeCell(idx)
-      local r = math.floor((idx-1)/7); local c = (idx-1)%7
-      local btn = CreateFrame('Button', nil, cal, 'UIPanelButtonTemplate')
-      btn:SetSize(58, 26); btn:SetPoint('TOPLEFT', 8 + c*64, -52 - r*30)
-      btn.text = btn:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall'); btn.text:SetPoint('CENTER')
-      btn.day = nil; btn.index = idx
-      local selTex = btn:CreateTexture(nil, 'ARTWORK'); selTex:SetAllPoints(btn); selTex:SetColorTexture(0, 1, 0, 0.25); selTex:Hide(); btn.selTex = selTex
-      cal.cells[idx] = btn; return btn
-    end
-    for i=1,42 do makeCell(i) end
-    cal.selectedIndex = nil
-
-    -- Time row (tightened)
-    local timeRow = CreateFrame('Frame', nil, cal); timeRow:SetPoint('BOTTOMLEFT', 0, 10); timeRow:SetSize(520, 24)
-    local timeLbl = timeRow:CreateFontString(nil,'OVERLAY','GameFontHighlight'); timeLbl:SetPoint('LEFT', 10, 0); timeLbl:SetText('Time:')
-    local hourEdit = CreateFrame('EditBox', nil, timeRow, 'InputBoxTemplate'); hourEdit:SetSize(34,22); hourEdit:SetPoint('LEFT', timeLbl, 'RIGHT', 6, 0); hourEdit:SetAutoFocus(false); hourEdit:SetNumeric(true); hourEdit:SetMaxLetters(2)
-    local colon = timeRow:CreateFontString(nil,'OVERLAY','GameFontHighlight'); colon:SetPoint('LEFT', hourEdit, 'RIGHT', 3, 0); colon:SetText(':')
-    local minEdit = CreateFrame('EditBox', nil, timeRow, 'InputBoxTemplate'); minEdit:SetSize(34,22); minEdit:SetPoint('LEFT', colon, 'RIGHT', 3, 0); minEdit:SetAutoFocus(false); minEdit:SetNumeric(true); minEdit:SetMaxLetters(2)
-    local ampmDrop = CreateFrame('Frame', nil, timeRow, 'UIDropDownMenuTemplate'); ampmDrop:SetPoint('LEFT', minEdit, 'RIGHT', -16, 0); UIDropDownMenu_SetWidth(ampmDrop, 70)
-
-    f.timeRow, f.hourEdit, f.minEdit, f.ampmDrop = timeRow, hourEdit, minEdit, ampmDrop
-
-    local function setSelectedByIndex(idx)
-      if cal.selectedIndex and cal.cells[cal.selectedIndex] then cal.cells[cal.selectedIndex].selTex:Hide() end
-      cal.selectedIndex = idx; if cal.cells[idx] then cal.cells[idx].selTex:Show() end
-    end
-    local function refreshCalendar()
-      cal.monthText:SetText(date('%B %Y', time({year=current.year, month=current.month, day=1})))
-      local fd = firstDayOfMonth(current.year, current.month); local dim = daysInMonth(current.year, current.month)
-      for i=1,42 do local b = cal.cells[i]; b.day=nil; b.text:SetText(''); b:Disable(); b.selTex:Hide() end
-      local n = 1
-      for i=(fd+1),(fd+dim) do local b = cal.cells[i]; b.day = n; b.text:SetText(tostring(n)); b:Enable()
-        if current.year==sel.year and current.month==sel.month and n==sel.day then setSelectedByIndex(i) end
-        n = n + 1
-      end
-    end
-    cal.refreshCalendar = refreshCalendar
-    cal.setSelectedByIndex = setSelectedByIndex
-
-    for i=1,42 do local b=cal.cells[i]; b:SetScript('OnClick', function(self) if not self.day then return end; sel.year, sel.month, sel.day = current.year, current.month, self.day; setSelectedByIndex(self.index) end) end
-    prevBtn:SetScript('OnClick', function() current.month = current.month - 1; if current.month==0 then current.month=12; current.year=current.year-1 end; refreshCalendar() end)
-    nextBtn:SetScript('OnClick', function() current.month = current.month + 1; if current.month==13 then current.month=1; current.year=current.year+1 end; refreshCalendar() end)
-
-    -- Footer buttons
-    local createBtn = CreateFrame('Button', nil, f, 'UIPanelButtonTemplate')
-    createBtn:SetSize(110, 24)
-    createBtn:SetPoint('BOTTOMRIGHT', -10, 10)
-    createBtn:SetText('Create')
-    f.createBtn = createBtn
-
-    local closeBtn = CreateFrame('Button', nil, f, 'UIPanelButtonTemplate')
-    closeBtn:SetSize(86, 24)
-    closeBtn:SetPoint('RIGHT', createBtn, 'LEFT', -6, 0)
-    closeBtn:SetText('Cancel')
-    closeBtn:SetScript('OnClick', function() f:Hide() end)
-
-    f.built = true
-  end
-
-  -- Initialize/refresh top dropdowns
-  local selectedVersion = 'Classic'
-  local selectedRaid = nil
-  local function PopulateInstanceDrop(versionName)
-    local list = RAID_CATALOG[versionName] or {}
-    selectedRaid = list[1] or 'Other'
-    UIDropDownMenu_SetText(f.instanceDrop, selectedRaid)
-    UIDropDownMenu_Initialize(f.instanceDrop, function(self, level)
-      for _, raidName in ipairs(list) do
-        local info = UIDropDownMenu_CreateInfo()
-        info.text = raidName
-        info.func = function() selectedRaid = raidName; UIDropDownMenu_SetText(f.instanceDrop, raidName) end
-        UIDropDownMenu_AddButton(info)
-      end
-    end)
-  end
-
-  UIDropDownMenu_Initialize(f.versionDrop, function(self, level)
-    for _, ver in ipairs({ 'Classic', 'Burning Crusade' }) do
-      local info = UIDropDownMenu_CreateInfo()
-      info.text = ver
-      info.func = function()
-        selectedVersion = ver
-        UIDropDownMenu_SetText(f.versionDrop, ver)
-        PopulateInstanceDrop(selectedVersion)
-      end
-      UIDropDownMenu_AddButton(info)
-    end
-  end)
-  UIDropDownMenu_SetText(f.versionDrop, selectedVersion)
-  PopulateInstanceDrop(selectedVersion)
-
-  -- Initialize time inputs
-  local function init12h(h24) local ap=(h24<12) and 'AM' or 'PM'; local h=h24%12; if h==0 then h=12 end; return h, ap end
-  local h12, ap = init12h(sel.hour)
-  f.hourEdit:SetText(string.format('%02d', h12))
-  f.minEdit:SetText(string.format('%02d', sel.min or 0))
-  local ampmValue = ap
-  UIDropDownMenu_Initialize(f.ampmDrop, function(self, level)
-    for _,val in ipairs({'AM','PM'}) do
-      local info = UIDropDownMenu_CreateInfo(); info.text = val; info.func = function() ampmValue = val; UIDropDownMenu_SetText(f.ampmDrop, val) end; UIDropDownMenu_AddButton(info)
-    end
-  end)
-  UIDropDownMenu_SetText(f.ampmDrop, ampmValue)
-
-  -- Refresh calendar grid
-  f.calArea.current.year, f.calArea.current.month = sel.year, sel.month
-  f.calArea.refreshCalendar()
-
-  -- Create button handler (reassign to capture latest locals)
-  f.createBtn:SetScript('OnClick', function()
-    if not U:HasPermission(GT.gdb.permissions.raidsMinRank) then
-      UIErrorsFrame:AddMessage('Insufficient rank to create raids', 1, 0, 0)
-      return
-    end
-    if not (sel.year and sel.month and sel.day) then
-      UIErrorsFrame:AddMessage('Please select a date.', 1, 0, 0)
-      return
-    end
-    local h12num = tonumber(f.hourEdit:GetText()) or 12
-    local mm     = tonumber(f.minEdit:GetText()) or 0
-    if h12num<1 then h12num=1 elseif h12num>12 then h12num=12 end
-    if mm<0 then mm=0 elseif mm>59 then mm=59 end
-    local h24 = to24h(h12num, UIDropDownMenu_GetText(f.ampmDrop) or ampmValue)
-
-    sel.hour, sel.min = h24, mm
-
-    local ts = time({ year = sel.year, month = sel.month, day = sel.day, hour = sel.hour or 20, min = sel.min or 0, sec = 0 })
-    local instName = selectedRaid or UIDropDownMenu_GetText(f.instanceDrop) or 'Other'
-    local title = instName
-
-    createEvent(title, ts, instName)
-
-    if R.Refresh then R:Refresh() end
-    if GT.Calendar and GT.Calendar.Refresh then GT.Calendar:Refresh() end
-    f:Hide()
-  end)
-
-  f:Show(); f:Raise()
-  self.createFrame = f
+ if self.createFrame and self.createFrame:IsShown() then
+ self.createFrame:Raise()
+ return
+ end
+ local now = time()
+ local tomorrow = now + 24*3600
+ local sel = {
+ year = (preset and preset.year) or tonumber(date('%Y', tomorrow)),
+ month = (preset and preset.month) or tonumber(date('%m', tomorrow)),
+ day = (preset and preset.day) or tonumber(date('%d', tomorrow)),
+ hour = (preset and preset.hour) or 20,
+ min = (preset and preset.min) or 0,
+ }
+ local function to12h(h24) local ap=(h24<12) and 'AM' or 'PM'; local h=h24%12; if h==0 then h=12 end; return h, ap end
+ local function to24h(h12, ap) if ap=='PM' then if h12<12 then return h12+12 end; return 12 else if h12==12 then return 0 end; return h12 end end
+ local f = self.createFrame or CreateFrame('Frame', 'GuildToolsCreateRaidFrame', UIParent, 'BasicFrameTemplateWithInset')
+ -- Narrower frame width
+ f:SetSize(560, 440)
+ f:SetPoint('CENTER')
+ f:SetFrameStrata('DIALOG')
+ f:SetToplevel(true)
+ f:SetClampedToScreen(true)
+ f:EnableMouse(true)
+ f:SetMovable(true)
+ f:RegisterForDrag('LeftButton')
+ f:SetScript('OnDragStart', f.StartMoving)
+ f:SetScript('OnDragStop', f.StopMovingOrSizing)
+ f.TitleText:SetText('Create Raid Event')
+ if not f.built then
+ local topY = -40
+ -- Top row: Version & Raid (tightened widths)
+ local versionLbl = f:CreateFontString(nil,'OVERLAY','GameFontHighlight')
+ versionLbl:SetPoint('TOPLEFT', 12, topY)
+ versionLbl:SetText('Version:')
+ local versionDrop = CreateFrame('Frame', nil, f, 'UIDropDownMenuTemplate')
+ versionDrop:SetPoint('LEFT', versionLbl, 'RIGHT', -16, 0)
+ UIDropDownMenu_SetWidth(versionDrop, 140)
+ f.versionDrop = versionDrop
+ local raidLbl = f:CreateFontString(nil,'OVERLAY','GameFontHighlight')
+ raidLbl:SetPoint('LEFT', versionDrop, 'RIGHT', 8, 0)
+ raidLbl:SetText('Raid:')
+ local instanceDrop = CreateFrame('Frame', nil, f, 'UIDropDownMenuTemplate')
+ instanceDrop:SetPoint('LEFT', raidLbl, 'RIGHT', -16, 0)
+ UIDropDownMenu_SetWidth(instanceDrop, 200)
+ f.instanceDrop = instanceDrop
+ -- Inline calendar/time area (narrower grid)
+ local cal = CreateFrame('Frame', nil, f, 'InsetFrameTemplate3')
+ cal:SetPoint('TOPLEFT', 12, topY - 40)
+ cal:SetPoint('TOPRIGHT', -12, topY - 40)
+ cal:SetHeight(300)
+ f.calArea = cal
+ cal.monthText = cal:CreateFontString(nil,'OVERLAY','GameFontHighlightLarge')
+ cal.monthText:SetPoint('TOPLEFT', 10, -8)
+ local prevBtn = CreateFrame('Button', nil, cal, 'UIPanelButtonTemplate'); prevBtn:SetSize(22,22); prevBtn:SetPoint('TOPRIGHT', -60, -8); prevBtn:SetText('<')
+ local nextBtn = CreateFrame('Button', nil, cal, 'UIPanelButtonTemplate'); nextBtn:SetSize(22,22); nextBtn:SetPoint('LEFT', prevBtn, 'RIGHT', 6, 0); nextBtn:SetText('>')
+ cal.prevBtn, cal.nextBtn = prevBtn, nextBtn
+ local current = { year = sel.year, month = sel.month }
+ cal.current = current
+ local weekdayNames = { 'Sun','Mon','Tue','Wed','Thu','Fri','Sat' }
+ for i=1,7 do local lbl = cal:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall'); lbl:SetPoint('TOPLEFT', 10 + (i-1)*64, -34); lbl:SetText(weekdayNames[i]) end
+ cal.cells = {}
+ local function makeCell(idx)
+ local r = math.floor((idx-1)/7); local c = (idx-1)%7
+ local btn = CreateFrame('Button', nil, cal, 'UIPanelButtonTemplate')
+ btn:SetSize(58, 26); btn:SetPoint('TOPLEFT', 8 + c*64, -52 - r*30)
+ btn.text = btn:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall'); btn.text:SetPoint('CENTER')
+ btn.day = nil; btn.index = idx
+ local selTex = btn:CreateTexture(nil, 'ARTWORK'); selTex:SetAllPoints(btn); selTex:SetColorTexture(0, 1, 0, 0.25); selTex:Hide(); btn.selTex = selTex
+ cal.cells[idx] = btn; return btn
+ end
+ for i=1,42 do makeCell(i) end
+ cal.selectedIndex = nil
+ -- Time row (tightened)
+ local timeRow = CreateFrame('Frame', nil, cal); timeRow:SetPoint('BOTTOMLEFT', 0, 10); timeRow:SetSize(520, 24)
+ local timeLbl = timeRow:CreateFontString(nil,'OVERLAY','GameFontHighlight'); timeLbl:SetPoint('LEFT', 10, 0); timeLbl:SetText('Time:')
+ local hourEdit = CreateFrame('EditBox', nil, timeRow, 'InputBoxTemplate'); hourEdit:SetSize(34,22); hourEdit:SetPoint('LEFT', timeLbl, 'RIGHT', 6, 0); hourEdit:SetAutoFocus(false); hourEdit:SetNumeric(true); hourEdit:SetMaxLetters(2)
+ local colon = timeRow:CreateFontString(nil,'OVERLAY','GameFontHighlight'); colon:SetPoint('LEFT', hourEdit, 'RIGHT', 3, 0); colon:SetText(':')
+ local minEdit = CreateFrame('EditBox', nil, timeRow, 'InputBoxTemplate'); minEdit:SetSize(34,22); minEdit:SetPoint('LEFT', colon, 'RIGHT', 3, 0); minEdit:SetAutoFocus(false); minEdit:SetNumeric(true); minEdit:SetMaxLetters(2)
+ local ampmDrop = CreateFrame('Frame', nil, timeRow, 'UIDropDownMenuTemplate'); ampmDrop:SetPoint('LEFT', minEdit, 'RIGHT', -16, 0); UIDropDownMenu_SetWidth(ampmDrop, 70)
+ f.timeRow, f.hourEdit, f.minEdit, f.ampmDrop = timeRow, hourEdit, minEdit, ampmDrop
+ local function setSelectedByIndex(idx)
+ if cal.selectedIndex and cal.cells[cal.selectedIndex] then cal.cells[cal.selectedIndex].selTex:Hide() end
+ cal.selectedIndex = idx; if cal.cells[idx] then cal.cells[idx].selTex:Show() end
+ end
+ local function refreshCalendar()
+ cal.monthText:SetText(date('%B %Y', time({year=current.year, month=current.month, day=1})))
+ local fd = firstDayOfMonth(current.year, current.month); local dim = daysInMonth(current.year, current.month)
+ for i=1,42 do local b = cal.cells[i]; b.day=nil; b.text:SetText(''); b:Disable(); b.selTex:Hide() end
+ local n = 1
+ for i=(fd+1),(fd+dim) do local b = cal.cells[i]; b.day = n; b.text:SetText(tostring(n)); b:Enable()
+ if current.year==sel.year and current.month==sel.month and n==sel.day then setSelectedByIndex(i) end
+ n = n + 1
+ end
+ end
+ cal.refreshCalendar = refreshCalendar
+ cal.setSelectedByIndex = setSelectedByIndex
+ for i=1,42 do local b=cal.cells[i]; b:SetScript('OnClick', function(self) if not self.day then return end; sel.year, sel.month, sel.day = current.year, current.month, self.day; setSelectedByIndex(self.index) end) end
+ prevBtn:SetScript('OnClick', function() current.month = current.month - 1; if current.month==0 then current.month=12; current.year=current.year-1 end; refreshCalendar() end)
+ nextBtn:SetScript('OnClick', function() current.month = current.month + 1; if current.month==13 then current.month=1; current.year=current.year+1 end; refreshCalendar() end)
+ -- Footer buttons
+ local createBtn = CreateFrame('Button', nil, f, 'UIPanelButtonTemplate')
+ createBtn:SetSize(110, 24)
+ createBtn:SetPoint('BOTTOMRIGHT', -10, 10)
+ createBtn:SetText('Create')
+ f.createBtn = createBtn
+ local closeBtn = CreateFrame('Button', nil, f, 'UIPanelButtonTemplate')
+ closeBtn:SetSize(86, 24)
+ closeBtn:SetPoint('RIGHT', createBtn, 'LEFT', -6, 0)
+ closeBtn:SetText('Cancel')
+ closeBtn:SetScript('OnClick', function() f:Hide() end)
+ f.built = true
+ end
+ -- Initialize/refresh top dropdowns
+ local selectedVersion = 'Classic'
+ local selectedRaid = nil
+ local function PopulateInstanceDrop(versionName)
+ local list = RAID_CATALOG[versionName] or {}
+ selectedRaid = list[1] or 'Other'
+ UIDropDownMenu_SetText(f.instanceDrop, selectedRaid)
+ UIDropDownMenu_Initialize(f.instanceDrop, function(self, level)
+ for _, raidName in ipairs(list) do
+ local info = UIDropDownMenu_CreateInfo()
+ info.text = raidName
+ info.func = function() selectedRaid = raidName; UIDropDownMenu_SetText(f.instanceDrop, raidName) end
+ UIDropDownMenu_AddButton(info)
+ end
+ end)
+ end
+ UIDropDownMenu_Initialize(f.versionDrop, function(self, level)
+ for _, ver in ipairs({ 'Classic', 'Burning Crusade' }) do
+ local info = UIDropDownMenu_CreateInfo()
+ info.text = ver
+ info.func = function()
+ selectedVersion = ver
+ UIDropDownMenu_SetText(f.versionDrop, ver)
+ PopulateInstanceDrop(selectedVersion)
+ end
+ UIDropDownMenu_AddButton(info)
+ end
+ end)
+ UIDropDownMenu_SetText(f.versionDrop, selectedVersion)
+ PopulateInstanceDrop(selectedVersion)
+ -- Initialize time inputs
+ local function init12h(h24) local ap=(h24<12) and 'AM' or 'PM'; local h=h24%12; if h==0 then h=12 end; return h, ap end
+ local h12, ap = init12h(sel.hour)
+ f.hourEdit:SetText(string.format('%02d', h12))
+ f.minEdit:SetText(string.format('%02d', sel.min or 0))
+ local ampmValue = ap
+ UIDropDownMenu_Initialize(f.ampmDrop, function(self, level)
+ for _,val in ipairs({'AM','PM'}) do
+ local info = UIDropDownMenu_CreateInfo(); info.text = val; info.func = function() ampmValue = val; UIDropDownMenu_SetText(f.ampmDrop, val) end; UIDropDownMenu_AddButton(info)
+ end
+ end)
+ UIDropDownMenu_SetText(f.ampmDrop, ampmValue)
+ -- Refresh calendar grid
+ f.calArea.current.year, f.calArea.current.month = sel.year, sel.month
+ f.calArea.refreshCalendar()
+ -- Create button handler (reassign to capture latest locals)
+ f.createBtn:SetScript('OnClick', function()
+ if not U:HasPermission(GT.gdb.permissions.raidsMinRank) then
+ UIErrorsFrame:AddMessage('Insufficient rank to create raids', 1, 0, 0)
+ return
+ end
+ if not (sel.year and sel.month and sel.day) then
+ UIErrorsFrame:AddMessage('Please select a date.', 1, 0, 0)
+ return
+ end
+ local h12num = tonumber(f.hourEdit:GetText()) or 12
+ local mm = tonumber(f.minEdit:GetText()) or 0
+ if h12num<1 then h12num=1 elseif h12num>12 then h12num=12 end
+ if mm<0 then mm=0 elseif mm>59 then mm=59 end
+ local h24 = to24h(h12num, UIDropDownMenu_GetText(f.ampmDrop) or ampmValue)
+ sel.hour, sel.min = h24, mm
+ local ts = time({ year = sel.year, month = sel.month, day = sel.day, hour = sel.hour or 20, min = sel.min or 0, sec = 0 })
+ local instName = selectedRaid or UIDropDownMenu_GetText(f.instanceDrop) or 'Other'
+ local title = instName
+ createEvent(title, ts, instName)
+ if R.Refresh then R:Refresh() end
+ if GT.Calendar and GT.Calendar.Refresh then GT.Calendar:Refresh() end
+ f:Hide()
+ end)
+ f:Show(); f:Raise()
+ self.createFrame = f
 end
