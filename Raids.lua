@@ -54,13 +54,13 @@ function R:BuildUI(parent)
  
  -- Creation UI removed by request; creation now happens via Calendar -> R:OpenCreateDialog().
  local y = -20 
- local header = p:CreateFontString(nil,'OVERLAY','GameFontNormalLarge') 
- header:SetPoint('TOPLEFT',20,y) 
- header:SetText('Raid Events') 
+ -- header removed per request 
+  
+  
  
  local list = CreateFrame('Frame', nil, p, 'InsetFrameTemplate3') 
  -- Moved up because the creator row was removed 
- list:SetPoint('TOPLEFT', 20, -60) 
+ list:SetPoint('TOPLEFT', 20, -20) 
  list:SetPoint('BOTTOMRIGHT', -20, 20) 
  
  local scroll = CreateFrame('ScrollFrame', 'GTR_Scroll', list, 'UIPanelScrollFrameTemplate') 
@@ -171,11 +171,11 @@ function R:Refresh()
  status:SetPoint('TOPRIGHT',-10,-10) 
  status:SetText(string.format('T:%d H:%d D:%d', counts.tanks or 0, counts.heals or 0, counts.dps or 0)) 
  local detailsBtn = CreateFrame('Button', nil, box, 'UIPanelButtonTemplate') 
- detailsBtn:SetSize(70,20); detailsBtn:SetPoint('TOPLEFT',10,-28); detailsBtn:SetText('Details') 
+ detailsBtn:SetSize(110,22); detailsBtn:SetPoint('BOTTOMLEFT', 10, 10); detailsBtn:SetText('View Sign Ups') 
  box.detailsShown=false 
  detailsBtn:SetScript('OnClick', function() 
  box.detailsShown = not box.detailsShown 
- if box.detailsShown then detailsBtn:SetText('Hide') else detailsBtn:SetText('Details') end 
+ if box.detailsShown then detailsBtn:SetText('Hide') else detailsBtn:SetText('View Sign Ups') end 
  if box.detailFrame then box.detailFrame:SetShown(box.detailsShown) end 
  end) 
  local df = CreateFrame('Frame', nil, box) 
@@ -187,20 +187,36 @@ function R:Refresh()
  table.sort(names); line:SetText(table.concat(names, ', ')) 
  end 
  addRole('Tanks','tanks',0); addRole('Heals','heals',220); addRole('DPS','dps',440) 
- local roles={'tanks','heals','dps'} 
- for i,role in ipairs(roles) do 
- local b = CreateFrame('Button', nil, box, 'UIPanelButtonTemplate') 
- b:SetSize(100,22); b:SetPoint('BOTTOMLEFT',10+(i-1)*110,38); b:SetText('Sign '..string.upper(role:sub(1,1))) 
- b:SetScript('OnClick', function() 
- local name = UnitName('player'); local _,class = UnitClass('player') 
- e.signups[name] = { player=name, class=class, role=role } 
- GT.gdb.dataVersion = (GT.gdb.dataVersion or 1) + 1 
- if GT.Comm then GT.Comm:Send('EVENT_UPDATE', U:Serialize(e)) end 
- if Log then Log:Add('INFO','EVENT','Signup '..name..' as '..role) end 
- R:Refresh() 
- end) 
- end 
- if U:HasPermission(GT.gdb.permissions.raidsMinRank) then 
+ -- Map display labels to internal role keys
+local roleButtons = {
+  { label='Tank',   key='tanks' },
+  { label='Healer', key='heals' },
+  { label='DPS',    key='dps'   },
+}
+
+-- Place buttons on the same horizontal line as title/date (top-right of the box)
+local prevBtn = nil
+for i,rb in ipairs(roleButtons) do
+  local b = CreateFrame('Button', nil, box, 'UIPanelButtonTemplate')
+  b:SetSize(80,22)
+  if i == 1 then
+    b:SetPoint('TOPRIGHT', box, 'TOPRIGHT', -10, -6)
+  else
+    b:SetPoint('RIGHT', prevBtn, 'LEFT', -6, 0)
+  end
+  b:SetText(rb.label)
+  b:SetScript('OnClick', function()
+    local name = UnitName('player'); local _,class = UnitClass('player')
+    e.signups[name] = { player=name, class=class, role=rb.key }
+    GT.gdb.dataVersion = (GT.gdb.dataVersion or 1) + 1
+    if GT.Comm then GT.Comm:Send('EVENT_UPDATE', U:Serialize(e)) end
+    if Log then Log:Add('INFO','EVENT','Signup '..name..' as '..rb.key) end
+    R:Refresh()
+  end)
+  prevBtn = b
+end
+
+if U:HasPermission(GT.gdb.permissions.raidsMinRank) then 
  local build=CreateFrame('Button', nil, box, 'UIPanelButtonTemplate') 
  build:SetSize(140,22); build:SetPoint('BOTTOMRIGHT', -10, 10); build:SetText('Build Raid Comp') 
  build:SetScript('OnClick', function() R.Comp:Open(e) end) 
