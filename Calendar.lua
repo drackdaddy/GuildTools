@@ -1,6 +1,6 @@
  
 local GT = GuildTools 
-GT.Calendar = GT.Calendar or {} 
+GT.Calendar = GT.Calendar or { } 
 local Cal = GT.Calendar 
 local current = { year = tonumber(date('%Y')), month = tonumber(date('%m')) } 
 local function firstDayOfMonth(y, m) 
@@ -14,14 +14,35 @@ local function daysInMonth(y, m)
  return tonumber(date('%d', last)) 
 end 
 local function eventsOnDay(y, m, d) 
- local out = {} 
- for _,e in pairs(GT.gdb.events or {}) do 
+ local out = { } 
+ for _,e in pairs(GT.gdb.events or { }) do 
  local ey = tonumber(date('%Y', e.ts)); local em = tonumber(date('%m', e.ts)); local ed = tonumber(date('%d', e.ts)) 
  if ey==y and em==m and ed==d then table.insert(out, e) end 
  end 
  table.sort(out, function(a,b) return a.ts < b.ts end) 
  return out 
 end 
+
+-- Added: solid color textures helper for buttons
+local function SetButtonColorTextures(btn, normalRGB, highlightRGB, pushedRGB, disabledRGB)
+  -- Normal
+  btn:SetNormalTexture("")
+  if not btn:GetNormalTexture() then btn:SetNormalTexture(1,1,1,1) end
+  btn:GetNormalTexture():SetColorTexture(normalRGB[1], normalRGB[2], normalRGB[3], 1)
+  -- Highlight (slight overlay)
+  btn:SetHighlightTexture("")
+  if not btn:GetHighlightTexture() then btn:SetHighlightTexture(1,1,1,0.25) end
+  btn:GetHighlightTexture():SetColorTexture(highlightRGB[1], highlightRGB[2], highlightRGB[3], 0.35)
+  -- Pushed
+  btn:SetPushedTexture("")
+  if not btn:GetPushedTexture() then btn:SetPushedTexture(1,1,1,1) end
+  btn:GetPushedTexture():SetColorTexture(pushedRGB[1], pushedRGB[2], pushedRGB[3], 1)
+  -- Disabled
+  btn:SetDisabledTexture("")
+  if not btn:GetDisabledTexture() then btn:SetDisabledTexture(1,1,1,1) end
+  btn:GetDisabledTexture():SetColorTexture(disabledRGB[1], disabledRGB[2], disabledRGB[3], 0.9)
+end
+
 local function layout(p) 
  if not p or not p.grid then return end 
  local gridW = p.grid:GetWidth() or 800 
@@ -65,50 +86,61 @@ function Cal:BuildUI(parent)
  next:SetSize(24,24) next:SetPoint('LEFT', today, 'RIGHT', 6, 0) next:SetText('>') 
  local monthText = p:CreateFontString(nil,'OVERLAY','GameFontHighlightLarge') 
  monthText:SetPoint('LEFT', next, 'RIGHT', 10, 0) 
- 
- -- Create Raid Event button at top of Calendar
- local create = CreateFrame('Button', nil, p, 'UIPanelButtonTemplate')
- create:SetSize(160, 24)
- create:SetPoint('TOPRIGHT', -20, -50)
- create:SetText('Create Raid Event')
- create:SetScript('OnClick', function()
-   if GT.Raids and GT.Raids.OpenCreateDialog then
-     GT.Raids:OpenCreateDialog()
-   else
-     UIErrorsFrame:AddMessage('Raids module not loaded', 1, 0, 0)
-   end
- end)
- p.createBtn = create
- 
+ -- Create Raid Event button at top of Calendar 
+ local create = CreateFrame('Button', nil, p, 'UIPanelButtonTemplate') 
+ create:SetSize(160, 24) 
+ create:SetPoint('TOPRIGHT', -20, -50) 
+ create:SetText('Create Raid Event') 
+ create:SetScript('OnClick', function() 
+ if GT.Raids and GT.Raids.OpenCreateDialog then 
+ GT.Raids:OpenCreateDialog() 
+ else 
+ UIErrorsFrame:AddMessage('Raids module not loaded', 1, 0, 0) 
+ end 
+ end) 
+ p.createBtn = create 
  local grid = CreateFrame('Frame', nil, p, 'InsetFrameTemplate3') 
  grid:SetPoint('TOPLEFT', 20, -80) 
  grid:SetPoint('BOTTOMRIGHT', -20, 20) 
  local weekdayNames = { 'Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday' } 
- p.headers = {} 
+ p.headers = { } 
  for c=1,7 do 
  local hdr = grid:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall') 
  hdr:SetText(weekdayNames[c]) 
  hdr:SetJustifyH('LEFT') 
  p.headers[c] = hdr 
  end 
- p.cells = {} 
+ p.cells = { } 
  for i=1,42 do 
  local cell = CreateFrame('Button', nil, grid, 'UIPanelButtonTemplate') 
+ -- Apply light tan textures to each cell
+ SetButtonColorTextures(
+   cell,
+   {0.92, 0.86, 0.76}, -- normal (light tan)
+   {0.87, 0.80, 0.68}, -- highlight (hover)
+   {0.83, 0.74, 0.59}, -- pushed
+   {0.95, 0.92, 0.87}  -- disabled
+ )
  local num = cell:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall') 
  num:SetPoint('TOPLEFT', 6, -4) 
  num:SetJustifyH('LEFT') 
+ -- Improve contrast on tan
+ num:SetTextColor(0.20, 0.16, 0.10)
  cell.num = num 
  local badge = cell:CreateFontString(nil,'OVERLAY','GameFontDisableSmall') 
  badge:SetPoint('TOPRIGHT', -6, -4) 
  badge:SetJustifyH('RIGHT') 
+ badge:SetTextColor(0.25, 0.20, 0.12)
  cell.badge = badge 
  local ev1 = cell:CreateFontString(nil,'OVERLAY','GameFontDisableSmall') 
  ev1:SetPoint('BOTTOMLEFT', 6, 18) 
  ev1:SetJustifyH('LEFT'); ev1:SetWordWrap(false) 
+ ev1:SetTextColor(0.25, 0.20, 0.12)
  cell.ev1 = ev1 
  local ev2 = cell:CreateFontString(nil,'OVERLAY','GameFontDisableSmall') 
  ev2:SetPoint('BOTTOMLEFT', 6, 4) 
  ev2:SetJustifyH('LEFT'); ev2:SetWordWrap(false) 
+ ev2:SetTextColor(0.25, 0.20, 0.12)
  cell.ev2 = ev2 
  p.cells[i] = cell 
  end 
@@ -138,7 +170,8 @@ function Cal:Refresh()
  local day = n; n = n + 1 
  cell:Enable() 
  cell.num:SetText(tostring(day)) 
- cell.num:SetTextColor(1,1,1) 
+ -- Use dark text on tan
+ cell.num:SetTextColor(0.20, 0.16, 0.10) 
  local ev = eventsOnDay(current.year, current.month, day) 
  cell.badge:SetText((#ev > 0) and tostring(#ev) or '') 
  local function trunc(s) if not s then return '' end if s:len() > 18 then return s:sub(1,18)..'…' else return s end end 
